@@ -139,9 +139,10 @@ with st.sidebar:
 
 # ───────────────────────── Main page ─────────────────────────
 
-st.title(f"{MODELS[model_key]['display_name']} · {tier_name}")
-st.caption(f"Workload: _{WORKLOAD_DEFAULTS[workload_id]['label']}_ — "
-           f"{prompt_tokens:,} prompt / {decode_tokens:,} decode tokens")
+st.title(MODELS[model_key]['display_name'])
+st.markdown(f"**Tier:** {tier_name}  &nbsp;·&nbsp;  **Workload:** "
+            f"_{WORKLOAD_DEFAULTS[workload_id]['label']}_  &nbsp;·&nbsp;  "
+            f"{prompt_tokens:,} prompt / {decode_tokens:,} decode tokens")
 
 
 # Project the selected cell
@@ -157,18 +158,26 @@ except ValueError as e:
     r, err = None, str(e)
 
 if err:
-    st.error(f"No projection available: {err}")
+    st.warning(
+        f"**No measurement yet for this cell.** Run "
+        f"`eval/run_sizer_bakeoffs.py` against a Skippy instance, "
+        f"regenerate `sizer_bundle.json`, and redeploy. Detail: {err}"
+    )
     st.stop()
 
-# Top-line results row
-badge = ("🟢 measured" if r["source"] == "measured"
-         else "🟡 projected (BW-scaled from RTX 5090)")
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Source", badge)
-c2.metric("Decode tok/s", f"{r['decode_tok_s']:.1f}")
-c3.metric("Prefill tok/s", f"{r['prefill_tok_s']:,.0f}")
-c4.metric("Total latency", f"{r['total_s']:.2f}s")
-c5.metric("Decode time", f"{r['decode_s']:.2f}s")
+# Source badge (rendered as a styled line, not a metric — long text truncates)
+if r["source"] == "measured":
+    st.success(f"🟢 **Measured** on RTX 5090 — direct bake-off baseline")
+else:
+    st.info(f"🟡 **Projected** — BW-scaled from RTX 5090 reference. "
+            f"Effective-bandwidth ratio: {hw.effective_bandwidth_gbs / 1523.2:.3f}")
+
+# Top-line numeric metrics
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Decode tok/s", f"{r['decode_tok_s']:.1f}")
+c2.metric("Prefill tok/s", f"{r['prefill_tok_s']:.0f}")
+c3.metric("Total latency", f"{r['total_s']:.2f} s")
+c4.metric("Decode portion", f"{r['decode_s']:.2f} s")
 
 st.markdown("---")
 
@@ -186,22 +195,31 @@ fig.add_trace(go.Bar(
     textposition="outside",
     marker_color=["#6b7280", "#3b82f6", "#10b981"],
 ))
+import math
+_ymax = max(stage_ms.values())
 fig.update_layout(
     title=f"Per-stage time — {MODELS[model_key]['display_name']} / {tier_name}",
     yaxis_title="Milliseconds (log)",
     yaxis_type="log",
-    height=380,
+    # Log-scale range: from 1ms to 1 decade above the tallest bar, so the
+    # "outside" text labels don't clip against the top edge.
+    yaxis=dict(gridcolor="#374151",
+               range=[0, math.log10(max(_ymax, 10)) + 0.6]),
+    height=420,
+    margin=dict(t=60, b=40, l=40, r=20),
     plot_bgcolor="#1f2937",
     paper_bgcolor="#111827",
     font=dict(color="#f3f4f6"),
     xaxis=dict(showgrid=False),
-    yaxis=dict(gridcolor="#374151"),
 )
 st.plotly_chart(fig, use_container_width=True)
 
 
 # Cross-tier comparison table
 st.subheader("Cross-tier comparison")
+st.caption(f"All tiers projected from RTX 5090's measured baseline for "
+           f"**{MODELS[model_key]['display_name']}** at **{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
+           "Lower tier → more bandwidth-bound → slower decode.")
 rows = []
 for tname, thw in TIERS.items():
     try:
@@ -212,23 +230,23 @@ for tname, thw in TIERS.items():
             compiler_quality=compiler_quality,
         )
         rows.append({
-            "tier": tname,
-            "source": rr["source"],
-            "decode_tok_s": rr["decode_tok_s"],
-            "prefill_tok_s": rr["prefill_tok_s"],
-            "total_s": rr["total_s"],
-            "prefill_s": rr["prefill_s"],
-            "decode_s": rr["decode_s"],
-            "host_ms": rr["host_ms"],
+            "Tier": tname,
+            "Source": "🟢 measured" if rr["source"] == "measured" else "🟡 projected",
+            "Decode tok/s": rr["decode_tok_s"],
+            "Prefill tok/s": round(rr["prefill_tok_s"]),
+            "Total (s)": rr["total_s"],
+            "Host (ms)": rr["host_ms"],
         })
     except ValueError:
-        rows.append({"tier": tname, "source": "no_data"})
+        rows.append({"Tier": tname, "Source": "⚪ no data"})
 df = pd.DataFrame(rows)
 st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # Cross-model comparison on this tier
 st.subheader("Cross-model comparison (on this tier)")
+st.caption("MoE's decode advantage comes from fewer active params per token — "
+           "dense 14B moves ~4.5× more weight bytes per decoded token than MoE 30B-A3B.")
 rows2 = []
 for mk in MODELS:
     try:
@@ -239,16 +257,16 @@ for mk in MODELS:
             compiler_quality=compiler_quality,
         )
         rows2.append({
-            "model": MODELS[mk]["display_name"],
-            "is_moe": MODELS[mk]["is_moe"],
-            "active_params_B": round(MODELS[mk]["active_params"] / 1e9, 1),
-            "bytes_per_tok_decode_B": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            "decode_tok_s": rr["decode_tok_s"],
-            "total_s": rr["total_s"],
-            "source": rr["source"],
+            "Model": MODELS[mk]["display_name"],
+            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+            "Decode tok/s": rr["decode_tok_s"],
+            "Total (s)": rr["total_s"],
+            "Source": "🟢 measured" if rr["source"] == "measured" else "🟡 projected",
         })
     except ValueError:
-        rows2.append({"model": MODELS[mk]["display_name"], "source": "no_data"})
+        rows2.append({"Model": MODELS[mk]["display_name"], "Source": "⚪ no data"})
 df2 = pd.DataFrame(rows2)
 st.dataframe(df2, use_container_width=True, hide_index=True)
 
