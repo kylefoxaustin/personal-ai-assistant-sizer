@@ -1,0 +1,411 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generated_at": "2026-04-22T19:56:24",
+    "generator": "eval/build_sizer_bundle.py",
+    "source_bakeoff_files": [
+      "eval/results/sizer_bakeoff_kyle-30b-moe-20260422v2_20260422-184917.json",
+      "eval/results/sizer_bakeoff_kyle-14b-dense-20260422v3_20260422-184529.json",
+      "eval/results/sizer_bakeoff_kyle-30b-moe-rag-20260422_20260422-194659.json",
+      "eval/results/sizer_bakeoff_kyle-14b-dense-rag-20260422_20260422-195557.json"
+    ],
+    "models_measured": [
+      {
+        "canonical": "qwen3-30b-a3b-q4-moe",
+        "reported": "kyle-30b-a3b-v1-q4_k_m",
+        "bakeoff_file": "sizer_bakeoff_kyle-30b-moe-20260422v2_20260422-184917.json",
+        "timestamp": "2026-04-22T18:49:17"
+      },
+      {
+        "canonical": "qwen2.5-14b-q4-dense",
+        "reported": "kyle-14b-v3-q4_k_m",
+        "bakeoff_file": "sizer_bakeoff_kyle-14b-dense-20260422v3_20260422-184529.json",
+        "timestamp": "2026-04-22T18:45:29"
+      },
+      {
+        "canonical": "qwen3-30b-a3b-q4-moe",
+        "reported": "kyle-30b-a3b-v1-q4_k_m",
+        "bakeoff_file": "sizer_bakeoff_kyle-30b-moe-rag-20260422_20260422-194659.json",
+        "timestamp": "2026-04-22T19:46:59"
+      },
+      {
+        "canonical": "qwen2.5-14b-q4-dense",
+        "reported": "kyle-14b-v3-q4_k_m",
+        "bakeoff_file": "sizer_bakeoff_kyle-14b-dense-rag-20260422_20260422-195557.json",
+        "timestamp": "2026-04-22T19:55:57"
+      }
+    ],
+    "notes": "Phase 1 bundle \u2014 timing measured from Skippy prod /generate with include_telemetry=True. Tier hardware constants below are placeholders; final values inherit from personal-ai-assistant-sizer/sizer/npu_model.py once that repo is stood up."
+  },
+  "models": {
+    "qwen2.5-14b-q4-dense": {
+      "display_name": "Qwen 2.5 14B Instruct (Q4_K_M, dense)",
+      "family": "qwen2.5",
+      "is_moe": false,
+      "total_params": 14700000000,
+      "active_params": 14700000000,
+      "bytes_per_param": 0.57,
+      "gguf_bytes": 8986070304,
+      "hidden_dim": 5120,
+      "num_layers": 48,
+      "num_attention_heads": 40,
+      "num_kv_heads": 8,
+      "vocab_size": 152064,
+      "ctx_len_trained": 32768,
+      "ctx_len_extended": 131072
+    },
+    "qwen3-30b-a3b-q4-moe": {
+      "display_name": "Qwen3 30B A3B (Q4_K_M, MoE)",
+      "family": "qwen3",
+      "is_moe": true,
+      "total_params": 30500000000,
+      "active_params": 3300000000,
+      "bytes_per_param": 0.57,
+      "gguf_bytes": 18556684448,
+      "hidden_dim": 2048,
+      "num_layers": 48,
+      "num_attention_heads": 32,
+      "num_kv_heads": 4,
+      "num_experts": 128,
+      "experts_per_token": 8,
+      "vocab_size": 151936,
+      "ctx_len_trained": 262144,
+      "ctx_len_extended": 262144
+    }
+  },
+  "workloads": {
+    "short_chat": {
+      "qwen3-30b-a3b-q4-moe": {
+        "n": 30,
+        "host_ms_p50": 1.86,
+        "host_ms_p90": 2.03,
+        "host_ms_p95": 2.35,
+        "prefill_ms_p50": 9.16,
+        "prefill_ms_p90": 25.4,
+        "prefill_ms_p95": 37.87,
+        "decode_ms_p50": 106.16,
+        "decode_ms_p90": 173.61,
+        "decode_ms_p95": 260.87,
+        "total_ms_p50": 118.78,
+        "total_ms_p90": 185.89,
+        "total_ms_p95": 273.26,
+        "prefill_tok_per_s_p50": 3720.9,
+        "prefill_tok_per_s_p90": 4263.9,
+        "prefill_tok_per_s_p95": 4314.1,
+        "decode_tok_per_s_p50": 286.3,
+        "decode_tok_per_s_p90": 456.2,
+        "decode_tok_per_s_p95": 457.2,
+        "prompt_tokens_p50": 34,
+        "prompt_tokens_p90": 40,
+        "prompt_tokens_p95": 40,
+        "completion_tokens_p50": 30,
+        "completion_tokens_p90": 48,
+        "completion_tokens_p95": 72,
+        "target_prefill_tokens": 750,
+        "target_decode_tokens": 150,
+        "critical_metric": "ttft_plus_steady_state_decode",
+        "request_params": {
+          "max_tokens": 200,
+          "use_rag": false,
+          "rag_k": 0
+        }
+      },
+      "qwen2.5-14b-q4-dense": {
+        "n": 30,
+        "host_ms_p50": 2.02,
+        "host_ms_p90": 2.28,
+        "host_ms_p95": 2.44,
+        "prefill_ms_p50": 8.28,
+        "prefill_ms_p90": 15.43,
+        "prefill_ms_p95": 15.89,
+        "decode_ms_p50": 2151.6,
+        "decode_ms_p90": 2272.19,
+        "decode_ms_p95": 2273.88,
+        "total_ms_p50": 2164.41,
+        "total_ms_p90": 2283.06,
+        "total_ms_p95": 2283.99,
+        "prefill_tok_per_s_p50": 4412.0,
+        "prefill_tok_per_s_p90": 5232.8,
+        "prefill_tok_per_s_p95": 5239.8,
+        "decode_tok_per_s_p50": 93.5,
+        "decode_tok_per_s_p90": 128.5,
+        "decode_tok_per_s_p95": 131.2,
+        "prompt_tokens_p50": 37,
+        "prompt_tokens_p90": 42,
+        "prompt_tokens_p95": 42,
+        "completion_tokens_p50": 201,
+        "completion_tokens_p90": 202,
+        "completion_tokens_p95": 202,
+        "target_prefill_tokens": 750,
+        "target_decode_tokens": 150,
+        "critical_metric": "ttft_plus_steady_state_decode",
+        "request_params": {
+          "max_tokens": 200,
+          "use_rag": false,
+          "rag_k": 0
+        }
+      }
+    },
+    "meeting_summarization": {
+      "qwen3-30b-a3b-q4-moe": {
+        "n": 10,
+        "host_ms_p50": 2.07,
+        "host_ms_p90": 2.29,
+        "host_ms_p95": 2.34,
+        "prefill_ms_p50": 37.27,
+        "prefill_ms_p90": 3524.28,
+        "prefill_ms_p95": 3741.62,
+        "decode_ms_p50": 4293.05,
+        "decode_ms_p90": 7071.35,
+        "decode_ms_p95": 7115.83,
+        "total_ms_p50": 5883.9,
+        "total_ms_p90": 7125.95,
+        "total_ms_p95": 10873.74,
+        "prefill_tok_per_s_p50": 344737.7,
+        "prefill_tok_per_s_p90": 355112.3,
+        "prefill_tok_per_s_p95": 357255.7,
+        "decode_tok_per_s_p50": 146.8,
+        "decode_tok_per_s_p90": 149.7,
+        "decode_tok_per_s_p95": 152.8,
+        "prompt_tokens_p50": 12691,
+        "prompt_tokens_p90": 13252,
+        "prompt_tokens_p95": 13252,
+        "completion_tokens_p50": 638,
+        "completion_tokens_p90": 1001,
+        "completion_tokens_p95": 1001,
+        "target_prefill_tokens": 12700,
+        "target_decode_tokens": 800,
+        "critical_metric": "prefill_throughput",
+        "request_params": {
+          "max_tokens": 1000,
+          "use_rag": false,
+          "rag_k": 0,
+          "temperature": 0.2
+        }
+      },
+      "qwen2.5-14b-q4-dense": {
+        "n": 10,
+        "host_ms_p50": 2.36,
+        "host_ms_p90": 2.54,
+        "host_ms_p95": 2.57,
+        "prefill_ms_p50": 33.71,
+        "prefill_ms_p90": 5115.9,
+        "prefill_ms_p95": 5526.61,
+        "decode_ms_p50": 101627.98,
+        "decode_ms_p90": 108192.82,
+        "decode_ms_p95": 109699.68,
+        "total_ms_p50": 101676.56,
+        "total_ms_p90": 109749.76,
+        "total_ms_p95": 113323.47,
+        "prefill_tok_per_s_p50": 440716.1,
+        "prefill_tok_per_s_p90": 447388.1,
+        "prefill_tok_per_s_p95": 457895.5,
+        "decode_tok_per_s_p50": 9.8,
+        "decode_tok_per_s_p90": 10.0,
+        "decode_tok_per_s_p95": 10.8,
+        "prompt_tokens_p50": 14630,
+        "prompt_tokens_p90": 15279,
+        "prompt_tokens_p95": 15279,
+        "completion_tokens_p50": 1001,
+        "completion_tokens_p90": 1002,
+        "completion_tokens_p95": 1002,
+        "target_prefill_tokens": 12700,
+        "target_decode_tokens": 800,
+        "critical_metric": "prefill_throughput",
+        "request_params": {
+          "max_tokens": 1000,
+          "use_rag": false,
+          "rag_k": 0,
+          "temperature": 0.2
+        }
+      }
+    },
+    "agentic_roundtrip": {
+      "qwen3-30b-a3b-q4-moe": {
+        "n": 20,
+        "host_ms_p50": 1.88,
+        "host_ms_p90": 2.14,
+        "host_ms_p95": 2.17,
+        "prefill_ms_p50": 9.53,
+        "prefill_ms_p90": 41.12,
+        "prefill_ms_p95": 44.35,
+        "decode_ms_p50": 293.71,
+        "decode_ms_p90": 307.1,
+        "decode_ms_p95": 353.03,
+        "total_ms_p50": 307.24,
+        "total_ms_p90": 346.67,
+        "total_ms_p95": 365.77,
+        "prefill_tok_per_s_p50": 11221.9,
+        "prefill_tok_per_s_p90": 16274.0,
+        "prefill_tok_per_s_p95": 16332.4,
+        "decode_tok_per_s_p50": 271.0,
+        "decode_tok_per_s_p90": 280.6,
+        "decode_tok_per_s_p95": 282.5,
+        "prompt_tokens_p50": 152,
+        "prompt_tokens_p90": 159,
+        "prompt_tokens_p95": 159,
+        "completion_tokens_p50": 79,
+        "completion_tokens_p90": 83,
+        "completion_tokens_p95": 96,
+        "target_prefill_tokens": 2500,
+        "target_decode_tokens": 200,
+        "critical_metric": "per_roundtrip_total_latency",
+        "request_params": {
+          "max_tokens": 250,
+          "use_rag": false,
+          "rag_k": 0,
+          "temperature": 0.1
+        }
+      },
+      "qwen2.5-14b-q4-dense": {
+        "n": 20,
+        "host_ms_p50": 2.0,
+        "host_ms_p90": 2.34,
+        "host_ms_p95": 2.42,
+        "prefill_ms_p50": 10.07,
+        "prefill_ms_p90": 24.8,
+        "prefill_ms_p95": 35.01,
+        "decode_ms_p50": 3276.3,
+        "decode_ms_p90": 3423.45,
+        "decode_ms_p95": 3456.74,
+        "total_ms_p50": 3297.37,
+        "total_ms_p90": 3435.66,
+        "total_ms_p95": 3469.4,
+        "prefill_tok_per_s_p50": 11737.7,
+        "prefill_tok_per_s_p90": 19588.8,
+        "prefill_tok_per_s_p95": 19647.3,
+        "decode_tok_per_s_p50": 76.7,
+        "decode_tok_per_s_p90": 93.5,
+        "decode_tok_per_s_p95": 101.7,
+        "prompt_tokens_p50": 183,
+        "prompt_tokens_p90": 196,
+        "prompt_tokens_p95": 196,
+        "completion_tokens_p50": 251,
+        "completion_tokens_p90": 252,
+        "completion_tokens_p95": 252,
+        "target_prefill_tokens": 2500,
+        "target_decode_tokens": 200,
+        "critical_metric": "per_roundtrip_total_latency",
+        "request_params": {
+          "max_tokens": 250,
+          "use_rag": false,
+          "rag_k": 0,
+          "temperature": 0.1
+        }
+      }
+    },
+    "rag_qa": {
+      "qwen3-30b-a3b-q4-moe": {
+        "n": 30,
+        "host_ms_p50": 157.36,
+        "host_ms_p90": 176.14,
+        "host_ms_p95": 191.05,
+        "prefill_ms_p50": 606.79,
+        "prefill_ms_p90": 1257.03,
+        "prefill_ms_p95": 1281.31,
+        "decode_ms_p50": 340.36,
+        "decode_ms_p90": 2493.53,
+        "decode_ms_p95": 2524.31,
+        "total_ms_p50": 1506.73,
+        "total_ms_p90": 3551.27,
+        "total_ms_p95": 3655.74,
+        "prefill_tok_per_s_p50": 5390.7,
+        "prefill_tok_per_s_p90": 5776.0,
+        "prefill_tok_per_s_p95": 5799.4,
+        "decode_tok_per_s_p50": 224.8,
+        "decode_tok_per_s_p90": 269.8,
+        "decode_tok_per_s_p95": 273.6,
+        "prompt_tokens_p50": 3271,
+        "prompt_tokens_p90": 6238,
+        "prompt_tokens_p95": 6238,
+        "completion_tokens_p50": 78,
+        "completion_tokens_p90": 501,
+        "completion_tokens_p95": 501,
+        "target_prefill_tokens": 4800,
+        "target_decode_tokens": 400,
+        "critical_metric": "end_to_end_latency_with_retrieval",
+        "request_params": {
+          "max_tokens": 500,
+          "use_rag": true,
+          "rag_k": 8
+        }
+      },
+      "qwen2.5-14b-q4-dense": {
+        "n": 30,
+        "host_ms_p50": 527.69,
+        "host_ms_p90": 544.24,
+        "host_ms_p95": 552.87,
+        "prefill_ms_p50": 18.71,
+        "prefill_ms_p90": 22.77,
+        "prefill_ms_p95": 1268.48,
+        "decode_ms_p50": 11985.42,
+        "decode_ms_p90": 14657.63,
+        "decode_ms_p95": 14763.42,
+        "total_ms_p50": 12690.35,
+        "total_ms_p90": 15300.12,
+        "total_ms_p95": 15591.3,
+        "prefill_tok_per_s_p50": 2599.8,
+        "prefill_tok_per_s_p90": 2865.2,
+        "prefill_tok_per_s_p95": 4474.7,
+        "decode_tok_per_s_p50": 41.4,
+        "decode_tok_per_s_p90": 106.4,
+        "decode_tok_per_s_p95": 116.0,
+        "prompt_tokens_p50": 49,
+        "prompt_tokens_p90": 57,
+        "prompt_tokens_p95": 5676,
+        "completion_tokens_p50": 501,
+        "completion_tokens_p90": 502,
+        "completion_tokens_p95": 502,
+        "target_prefill_tokens": 4800,
+        "target_decode_tokens": 400,
+        "critical_metric": "end_to_end_latency_with_retrieval",
+        "request_params": {
+          "max_tokens": 500,
+          "use_rag": true,
+          "rag_k": 8
+        }
+      }
+    }
+  },
+  "tiers_measured": {
+    "note": "Placeholder \u2014 copy from sizer repo's npu_model.py TIERS dict once crib is done. Values below are mirrors of keyhole-sizer as of 2026-04-22.",
+    "presets": {
+      "NPU_LOW_LP4": {
+        "tops_int8": 2.0,
+        "bus_width_bit": 32,
+        "mem_speed_gtps": 4.266,
+        "bw_eff": 0.7
+      },
+      "NPU_LOW_LP5_32BIT": {
+        "tops_int8": 2.0,
+        "bus_width_bit": 32,
+        "mem_speed_gtps": 6.4,
+        "bw_eff": 0.7
+      },
+      "NPU_LOW_LP5_64BIT": {
+        "tops_int8": 2.0,
+        "bus_width_bit": 64,
+        "mem_speed_gtps": 6.4,
+        "bw_eff": 0.7
+      },
+      "NPU_LOW_LP5X": {
+        "tops_int8": 2.0,
+        "bus_width_bit": 64,
+        "mem_speed_gtps": 8.533,
+        "bw_eff": 0.7
+      },
+      "NPU_MID": {
+        "tops_int8": 40.0,
+        "bus_width_bit": 128,
+        "mem_speed_gtps": 6.4,
+        "bw_eff": 0.7
+      },
+      "NPU_HIGH": {
+        "tops_int8": 200.0,
+        "bus_width_bit": 128,
+        "mem_speed_gtps": 8.4,
+        "bw_eff": 0.7
+      }
+    }
+  }
+}
