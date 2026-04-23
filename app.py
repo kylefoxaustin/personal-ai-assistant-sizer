@@ -21,6 +21,12 @@ import streamlit as st
 
 from sizer.measured import get_bundle_summary
 from sizer.npu_model import MODELS, TIERS, project_llm, model_active_bytes_per_token
+from sizer.precision import (
+    MEASURED_PRECISION_QUALITY, MEASURED_PRECISION_SPEED,
+    tier_precision_capability, capability_badge, capability_label,
+    capability_color, quality_badge_text, quality_color,
+    RETARGETING_COSTS, deployment_path_for_tier, retargeting_cost_color,
+)
 
 
 st.set_page_config(page_title="Skippy NPU Sizer", layout="wide",
@@ -215,6 +221,223 @@ c1.metric("Decode tok/s", f"{r['decode_tok_s']:.1f}")
 c2.metric("Prefill tok/s", f"{r['prefill_tok_s']:.0f}")
 c3.metric("Total latency", f"{r['total_s']:.2f} s")
 c4.metric("Decode portion", f"{r['decode_s']:.2f} s")
+
+st.markdown("---")
+
+
+# ───────────────────────── Precision capability card ─────────────────────────
+# What compute precisions can this tier actually execute, and what's the
+# measured quality delta for each? Populated from Skippy's 2026-04-23 Qwen
+# 2.5 14B quantization experiments — fp16/FP8 on A6000 pod, INT8 on H100 pod,
+# Q4_K_M on Skippy's native-RAG 5090 run (methodology-different, shown for
+# context).
+
+st.subheader("Precision capability")
+st.caption(
+    f"What compute precisions **{hw.name}** can execute, and the measured "
+    f"quality delta for each precision on Qwen 2.5 14B / Skippy's v2+RAG eval "
+    f"(44 prompts × 3 samples). Green = within ~2pp noise floor; "
+    f"amber = small but real; red = meaningful regression."
+)
+
+_cap = tier_precision_capability(hw.name)
+# Present 4 precision columns: bf16/fp16, FP8, INT8, Q4_K_M
+_precision_columns = [
+    ("bf16/fp16", "fp16",  "fp16/bf16"),
+    ("fp8",       "fp8",   "FP8"),
+    ("int8",      "int8",  "INT8 (W8A8)"),
+    ("q4_km",     "q4_km", "Q4_K_M"),
+]
+_cols = st.columns(4)
+for col, (cap_key, quality_key, display) in zip(_cols, _precision_columns):
+    cap_level = _cap.get(cap_key, "none")
+    pm = MEASURED_PRECISION_QUALITY.get(quality_key)
+    speed = MEASURED_PRECISION_SPEED.get(quality_key)
+
+    # Top row: precision name + capability glyph, color-coded
+    cap_color = capability_color(cap_level)
+    cap_glyph = capability_badge(cap_level)
+    cap_text = capability_label(cap_level)
+    with col:
+        st.markdown(
+            f"<div style='padding: 10px; border-radius: 6px; "
+            f"background:#1f2937; border-left: 4px solid {cap_color};'>"
+            f"<div style='font-size: 0.85rem; color: #9ca3af;'>{display}</div>"
+            f"<div style='font-size: 1.3rem; color: {cap_color}; font-weight: 600;'>"
+            f"{cap_glyph} {cap_text}</div>"
+            + (
+                f"<div style='font-size: 0.8rem; color: {quality_color(pm)}; "
+                f"margin-top: 6px;'>Quality: {quality_badge_text(pm)}</div>"
+                if pm is not None and cap_level != "none" else
+                f"<div style='font-size: 0.8rem; color: #6b7280; margin-top: 6px;'>"
+                f"Quality: —</div>"
+            )
+            + (
+                f"<div style='font-size: 0.8rem; color: #9ca3af; margin-top: 4px;'>"
+                f"Speed (5090): {speed['tok_s']:.1f} tok/s "
+                f"({speed['speedup_vs_fp16']:.2f}× fp16)</div>"
+                if speed is not None and cap_level != "none" else ""
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+with st.expander("How to read this / what was measured", expanded=False):
+    st.markdown("""
+**Capability glyphs:**
+- ✓ **tensor-core** — native tensor-core matmul path (fast, preferred)
+- ⚠︎ **CUDA-core only** — legacy CUDA-core path (e.g. DP4A); works for
+  small CNNs but crippling for LLM-scale matmul
+- ✗ **not supported** — no hardware path; would need CPU fallback or
+  a different model quantization scheme
+
+**Quality colors** (delta vs fp16 on Skippy's v2+RAG eval, 132 samples):
+- 🟢 **within ±2pp** — indistinguishable from fp16 (noise floor)
+- 🟡 **2–5pp** — small but real drift; inspect per-category breakdown
+- 🔴 **>5pp** — meaningful capability regression; reconsider the precision
+
+**Why INT8 is CUDA-core-only on 5090 but tensor-core on every NPU tier:**
+consumer Blackwell (SM120) dropped dedicated tensor-core INT8 in favor of
+FP8/FP4 tensor cores. INT8 math still works on 5090 via the DP4A CUDA-core
+path (retained from Pascal) — vLLM's CUTLASS W8A8 loader refuses the 5090
+because it requires tensor-core INT8 templates. Edge NPUs (NXP Neutron,
+Kinara Ara, Hailo-8 class) have dedicated INT8 matmul engines and don't
+share this constraint.
+
+**INT8 measured -3.8pp caveat:** the 5 regressed samples are all on two
+refuse-to-answer prompts where both fp16 and INT8 correctly refused.
+INT8's hedge used family-level chip names ("various NXP i.MX processors")
+while fp16's hedge named specific SKUs ("NXP i.MX 8QuadMax"). Content
+is equivalent; only the keyword-match grader sees a difference.
+
+**Q4_K_M quality is from a different methodology** (Skippy's native RAG
+path via llama-cpp) and isn't directly comparable to the fp16/FP8/INT8
+shim-path measurements. Shown as context, not as a head-to-head delta.
+
+**Measurement provenance:**
+- fp16 + FP8: A6000 48GB pod, vLLM shim, v2+RAG (2026-04-23 FP8 runbook)
+- INT8 W8A8: H100 80GB SXM pod, SmoothQuant+GPTQ 512 calib, same shim
+- Q4_K_M: RTX 5090 local, Skippy's native RAG pipeline
+""")
+
+st.markdown("---")
+
+
+# ───────────────────────── Retargeting cost ─────────────────────────
+# The lifecycle cost of deploying a model to a tier that can't run the
+# model's native precision. This is per-iteration — every time the model
+# retrains, this cost fires again.
+
+st.subheader("Retargeting cost per model revision")
+st.caption(
+    f"Lifecycle cost of shipping Skippy's current Q4_K_M fp16-compute model to "
+    f"**{hw.name}** on each retrain. The silicon team's \"area savings from "
+    f"INT8-only\" is a one-time BOM win; this is the forever-cost at the "
+    f"org level — paid every time the model is retrained, per customer, "
+    f"per fine-tune."
+)
+
+# Figure out which retargeting path this tier needs for Skippy's current model
+_skippy_model_dtype = MODELS[model_key].get("compute_dtype", "fp16")
+_path_key = deployment_path_for_tier(hw.name, _skippy_model_dtype)
+_cost = RETARGETING_COSTS[_path_key]
+_cost_color = retargeting_cost_color(_path_key)
+
+_rc_col_a, _rc_col_b, _rc_col_c, _rc_col_d = st.columns(4)
+with _rc_col_a:
+    st.markdown(
+        f"<div style='padding: 10px; border-radius: 6px; background:#1f2937; "
+        f"border-left: 4px solid {_cost_color};'>"
+        f"<div style='font-size: 0.8rem; color: #9ca3af;'>Deployment path</div>"
+        f"<div style='font-size: 1.05rem; color: {_cost_color}; font-weight: 600;'>"
+        f"{_cost.path}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+_rc_col_b.metric("Wall time per cycle", f"{_cost.wall_minutes} min")
+_rc_col_c.metric("Compute cost per cycle", f"${_cost.dollars_per_cycle:.2f}")
+_rc_col_d.metric("Engineer hours per cycle", f"{_cost.engineer_hours:.1f} hrs")
+
+# Annualized what-if: user picks retrain cadence, we project annual overhead
+with st.expander("Annualized lifecycle cost — what-if retrain cadence",
+                 expanded=False):
+    _retrain_freq = st.selectbox(
+        "How often does Skippy retrain?",
+        options=["daily", "weekly", "monthly", "quarterly", "annually"],
+        index=1,
+        key="k_retrain_freq",
+        help="Pick the retrain cadence. The sizer multiplies per-cycle cost "
+             "by the matching cycles-per-year to project annual overhead.",
+    )
+    cycles_per_year = {
+        "daily": 365, "weekly": 52, "monthly": 12,
+        "quarterly": 4, "annually": 1,
+    }[_retrain_freq]
+
+    annual_hours = _cost.engineer_hours * cycles_per_year
+    annual_dollars = _cost.dollars_per_cycle * cycles_per_year
+    annual_wall = _cost.wall_minutes * cycles_per_year / 60.0  # hrs
+
+    st.markdown(
+        f"At **{_retrain_freq}** retrains ({cycles_per_year} cycles/yr), "
+        f"shipping to **{hw.name}** adds:"
+    )
+    _ann_a, _ann_b, _ann_c = st.columns(3)
+    _ann_a.metric("Annual engineer time", f"{annual_hours:.0f} hrs")
+    _ann_b.metric("Annual compute cost", f"${annual_dollars:.0f}")
+    _ann_c.metric("Annual wall time on pod", f"{annual_wall:.0f} hrs")
+
+    if _cost.regression_gate:
+        st.warning(
+            "⚠️ **Regression gate required** — this path requires human "
+            "review of prompt-level accuracy diffs before shipping. Factor "
+            "release-blocking risk into your planning: ~10-20% of iterations "
+            "need a re-tune pass (different calibration data, different "
+            "quant scheme parameters), which doubles the cycle cost."
+        )
+    else:
+        st.success(
+            "🟢 **No regression gate** — deploy the training artifact "
+            "directly. Retargeting is free at the lifecycle level."
+        )
+
+with st.expander("Why this cost exists — the hidden silicon trade-off",
+                 expanded=False):
+    st.markdown(f"""
+**What we're measuring:** {_cost.notes}
+
+**The four-rung ladder of retargeting cost:**
+
+| Path | Per-cycle wall | Per-cycle $ | Per-cycle engineer hrs | Regression gate? |
+|---|---:|---:|---:|:---:|
+| **FP-native** (same precision as trained) | 0 min | $0 | 0 hrs | no |
+| **Weight-only quant** (Q4_K_M / Q8_0) | ~5 min | $0 | 0.1 hrs | no |
+| **PTQ W8A8 INT8** (what we ran today) | ~55 min | ~$1.75 | ~1.5 hrs | **yes** |
+| **Quantization-aware training** | 4-8 hrs | $30-100 | ~4 hrs | **yes** |
+
+**What this means for the architecture decision:**
+
+- INT8-only silicon forces either **PTQ** (every retrain = 55-minute pod job
+  + 1.5 engineer hrs + human signoff) or **QAT** (multiply by 10). This is
+  **paid forever**, not once.
+- FP-native silicon (bf16/FP8) lets you ship the training artifact directly.
+  Zero retargeting cost per cycle.
+- For a model that retrains weekly (Skippy's current pattern), INT8-only
+  silicon adds **~75-80 engineer-hours/year + $90/year in compute** just
+  for the quant-regression gate. For a product line with N customer
+  fine-tunes, multiply by N.
+- For a frozen-model consumer device, this cost is negligible. For a
+  platform that supports continuous fine-tuning or customer-specific
+  model customization, it's often **larger than the BOM savings from
+  the cheaper INT8-only silicon**.
+
+**The missing row in most silicon-team trade matrices:**
+→ Per-unit BOM cost is a ONE-TIME win (factored into gross margin)
+→ Per-retrain retargeting cost is a RECURRING expense (factored into
+   OPEX, engineer time, and release velocity)
+
+A rigorous silicon decision needs both rows.
+""")
 
 st.markdown("---")
 
