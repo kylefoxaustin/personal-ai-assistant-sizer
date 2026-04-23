@@ -212,7 +212,7 @@ fig.update_layout(
     font=dict(color="#f3f4f6"),
     xaxis=dict(showgrid=False),
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 
 # Cross-tier comparison table
@@ -240,7 +240,7 @@ for tname, thw in TIERS.items():
     except ValueError:
         rows.append({"Tier": tname, "Source": "⚪ no data"})
 df = pd.DataFrame(rows)
-st.dataframe(df, use_container_width=True, hide_index=True)
+st.dataframe(df, width="stretch", hide_index=True)
 
 
 # Cross-model comparison on this tier
@@ -268,7 +268,7 @@ for mk in MODELS:
     except ValueError:
         rows2.append({"Model": MODELS[mk]["display_name"], "Source": "⚪ no data"})
 df2 = pd.DataFrame(rows2)
-st.dataframe(df2, use_container_width=True, hide_index=True)
+st.dataframe(df2, width="stretch", hide_index=True)
 
 
 # XLSX download
