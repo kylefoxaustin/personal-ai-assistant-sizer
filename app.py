@@ -165,12 +165,34 @@ if err:
     )
     st.stop()
 
-# Source badge (rendered as a styled line, not a metric — long text truncates)
+# Source badge — feasibility first (model can't even load), then measured/projected.
+if r["source"] == "wont_fit":
+    f = r["feasibility"]
+    st.error(
+        f"🔴 **Won't fit — model exceeds NPU memory capacity.**\n\n"
+        f"Required: {f['required_gb']} GB "
+        f"(weights {f['breakdown']['weights_gb']} + KV {f['breakdown']['kv_cache_gb']} "
+        f"+ overhead {f['breakdown']['overhead_gb']}) · "
+        f"Available: {f['available_gb']} GB · "
+        f"Short by **{-f['headroom_gb']:.1f} GB**.\n\n"
+        f"This NPU tier cannot load this model. Try a smaller model "
+        f"(e.g. TinyLlama 1.1B Q4 ≈ 0.7 GB, Qwen 1.5B Q4 ≈ 1.0 GB) or "
+        f"move up to a tier with enough memory."
+    )
+    st.stop()
+
 if r["source"] == "measured":
     st.success(f"🟢 **Measured** on RTX 5090 — direct bake-off baseline")
 else:
+    feas_note = ""
+    if r["feasibility"]["verdict"] == "tight":
+        feas_note = (f"  ⚠️ _Tight fit_ — only "
+                     f"{r['feasibility']['headroom_gb']} GB headroom "
+                     f"({r['feasibility']['required_gb']} GB needed of "
+                     f"{r['feasibility']['available_gb']} GB).")
     st.info(f"🟡 **Projected** — BW-scaled from RTX 5090 reference. "
-            f"Effective-bandwidth ratio: {hw.effective_bandwidth_gbs / 1523.2:.3f}")
+            f"Effective-bandwidth ratio: {hw.effective_bandwidth_gbs / 1523.2:.3f}."
+            f"{feas_note}")
 
 # Top-line numeric metrics
 c1, c2, c3, c4 = st.columns(4)
@@ -229,9 +251,22 @@ for tname, thw in TIERS.items():
             decode_tokens=decode_tokens,
             compiler_quality=compiler_quality,
         )
+        if rr["source"] == "wont_fit":
+            f = rr["feasibility"]
+            rows.append({
+                "Tier": tname,
+                "Source": "🔴 won't fit",
+                "Decode tok/s": "—",
+                "Prefill tok/s": "—",
+                "Total (s)": "—",
+                "Host (ms)": f"needs {f['required_gb']} GB (has {f['available_gb']})",
+            })
+            continue
+        tight_note = " ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""
         rows.append({
             "Tier": tname,
-            "Source": "🟢 measured" if rr["source"] == "measured" else "🟡 projected",
+            "Source": ("🟢 measured" if rr["source"] == "measured"
+                       else "🟡 projected") + tight_note,
             "Decode tok/s": rr["decode_tok_s"],
             "Prefill tok/s": round(rr["prefill_tok_s"]),
             "Total (s)": rr["total_s"],
@@ -256,6 +291,17 @@ for mk in MODELS:
             decode_tokens=decode_tokens,
             compiler_quality=compiler_quality,
         )
+        if rr["source"] == "wont_fit":
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                "Decode tok/s": "—",
+                "Total (s)": "—",
+                "Source": "🔴 won't fit",
+            })
+            continue
         rows2.append({
             "Model": MODELS[mk]["display_name"],
             "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
@@ -263,7 +309,8 @@ for mk in MODELS:
             "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
             "Decode tok/s": rr["decode_tok_s"],
             "Total (s)": rr["total_s"],
-            "Source": "🟢 measured" if rr["source"] == "measured" else "🟡 projected",
+            "Source": ("🟢 measured" if rr["source"] == "measured"
+                       else "🟡 projected") + (" ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""),
         })
     except ValueError:
         rows2.append({"Model": MODELS[mk]["display_name"], "Source": "⚪ no data"})

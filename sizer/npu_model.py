@@ -212,6 +212,61 @@ def model_active_bytes_per_token(model_key: str) -> float:
     return m["active_params"] * m["bytes_per_param"]
 
 
+def kv_cache_bytes_per_token(model_key: str, dtype_bytes: int = 2) -> float:
+    """KV cache bytes consumed per token of context. Uses GQA ratio:
+    kv_heads/attn_heads when available, else falls back to 1.0.
+
+    kv_cache_per_token = num_layers × 2 (K+V) × hidden_dim × (kv/attn) × bytes_per_elem
+    """
+    m = MODELS[model_key]
+    ratio = m.get("num_kv_heads", m.get("num_attention_heads", 1)) / \
+            max(m.get("num_attention_heads", 1), 1)
+    return m["num_layers"] * 2 * m["hidden_dim"] * ratio * dtype_bytes
+
+
+# Memory overhead assumed for the runtime (llama-cpp-python + CUDA graphs +
+# activation buffers + a little headroom). Pragmatic — real overhead varies
+# by runtime, but 1 GB is a safe-ish default for llama-cpp on GPU.
+RUNTIME_OVERHEAD_BYTES = 1_000_000_000
+
+
+def memory_feasibility(model_key: str, hw: Hardware, context_tokens: int) -> dict:
+    """Decide whether `(model, hw)` can even load at the given context length.
+
+    Returns {"verdict": "fits"|"tight"|"wont_fit",
+             "required_gb", "available_gb", "headroom_gb",
+             "breakdown": {...}}.
+
+    Thresholds:
+      - wont_fit: required > available
+      - tight:    required > available × 0.85 (less than 15% headroom)
+      - fits:     otherwise
+    """
+    m = MODELS[model_key]
+    weights_b = m["gguf_bytes"]
+    kv_b = kv_cache_bytes_per_token(model_key) * context_tokens
+    total_required = weights_b + kv_b + RUNTIME_OVERHEAD_BYTES
+    available = hw.mem_capacity_gb * 1_000_000_000
+    headroom = available - total_required
+    if headroom < 0:
+        verdict = "wont_fit"
+    elif headroom < available * 0.15:
+        verdict = "tight"
+    else:
+        verdict = "fits"
+    return {
+        "verdict": verdict,
+        "required_gb": round(total_required / 1e9, 2),
+        "available_gb": round(available / 1e9, 2),
+        "headroom_gb": round(headroom / 1e9, 2),
+        "breakdown": {
+            "weights_gb": round(weights_b / 1e9, 2),
+            "kv_cache_gb": round(kv_b / 1e9, 3),
+            "overhead_gb": round(RUNTIME_OVERHEAD_BYTES / 1e9, 2),
+        },
+    }
+
+
 # ───────────────────────── Projections ─────────────────────────
 
 def project_llm(
@@ -232,9 +287,31 @@ def project_llm(
          same (model, workload). Ratio = hw.effective_bw / 5090.effective_bw.
       3. Apply compiler_quality multiplier (0.5–1.0) to LLM-specific portions.
 
-    Returns {"source": "measured"|"projected", "decode_tok_s", "prefill_tok_s",
-             "ttft_s", "host_ms", "total_s", "decode_s", "prefill_s"}
+    Returns {"source": "measured"|"projected"|"wont_fit",
+             "decode_tok_s", "prefill_tok_s", "ttft_s", "host_ms",
+             "total_s", "decode_s", "prefill_s", "feasibility": {...}}
     """
+    # 0) Memory feasibility check — a model that can't load is not a perf
+    # question. Return early with a memory-only result.
+    feasibility = memory_feasibility(model_key, hw, prompt_tokens + decode_tokens)
+    if feasibility["verdict"] == "wont_fit":
+        return {
+            "source": "wont_fit",
+            "model_key": model_key,
+            "workload_id": workload_id,
+            "hw_name": hw.name,
+            "decode_tok_s": 0.0,
+            "prefill_tok_s": 0.0,
+            "ttft_s": None,
+            "host_ms": 0.0,
+            "prefill_s": 0.0,
+            "decode_s": 0.0,
+            "total_s": 0.0,
+            "decode_tokens": decode_tokens,
+            "prompt_tokens": prompt_tokens,
+            "feasibility": feasibility,
+        }
+
     # 1) Measured wins
     m = hw.get_measured(model_key, workload_id)
     source = "measured"
@@ -276,6 +353,7 @@ def project_llm(
         "total_s": round(host_s + prefill_s + decode_s, 3),
         "decode_tokens": decode_tokens,
         "prompt_tokens": prompt_tokens,
+        "feasibility": feasibility,
     }
 
 
