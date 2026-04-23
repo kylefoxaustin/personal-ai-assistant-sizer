@@ -181,6 +181,21 @@ if r["source"] == "wont_fit":
     )
     st.stop()
 
+if r["source"] == "dtype_mismatch":
+    d = r["dtype_detail"]
+    st.error(
+        f"🔴 **Dtype incompatible — this NPU can't execute the model's compute path.**\n\n"
+        f"Model needs: **{d['model_needs']}** (weights are {d['quant_scheme']} "
+        f"but matmul runs in fp16 — standard llama-cpp behavior).\n\n"
+        f"This NPU supports: **{', '.join(d['hw_supports'])}**.\n\n"
+        f"To run on this silicon class you'd need either: "
+        f"(a) re-quantize to **W8A8** (weights AND activations INT8), "
+        f"(b) fall back to **CPU fp16** (unusable — sub-1 tok/s at 14B dense), "
+        f"or (c) move up to a tier with fp16/bf16 tensor support "
+        f"(NPU Low-LP5X or higher)."
+    )
+    st.stop()
+
 if r["source"] == "measured":
     st.success(f"🟢 **Measured** on RTX 5090 — direct bake-off baseline")
 else:
@@ -262,6 +277,17 @@ for tname, thw in TIERS.items():
                 "Host (ms)": f"needs {f['required_gb']} GB (has {f['available_gb']})",
             })
             continue
+        if rr["source"] == "dtype_mismatch":
+            d = rr["dtype_detail"]
+            rows.append({
+                "Tier": tname,
+                "Source": "🔴 dtype mismatch",
+                "Decode tok/s": "—",
+                "Prefill tok/s": "—",
+                "Total (s)": "—",
+                "Host (ms)": f"needs {d['model_needs']} (has {'/'.join(d['hw_supports'])})",
+            })
+            continue
         tight_note = " ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""
         rows.append({
             "Tier": tname,
@@ -300,6 +326,17 @@ for mk in MODELS:
                 "Decode tok/s": "—",
                 "Total (s)": "—",
                 "Source": "🔴 won't fit",
+            })
+            continue
+        if rr["source"] == "dtype_mismatch":
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                "Decode tok/s": "—",
+                "Total (s)": "—",
+                "Source": "🔴 dtype mismatch",
             })
             continue
         rows2.append({

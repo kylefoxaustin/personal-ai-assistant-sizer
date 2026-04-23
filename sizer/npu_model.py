@@ -184,6 +184,13 @@ MODELS: dict[str, dict] = {
         "num_kv_heads": 8,
         "vocab_size": 152064,
         "ctx_len_trained": 32768,
+        # Q4_K_M is weight-only quantization — weights stored in 4-bit k-means
+        # groupings, but matmul compute is fp16 (weights dequantized per-op).
+        # So the NPU needs fp16/bf16 tensor ops to run this natively; INT8-only
+        # NPUs (NXP Neutron class) cannot run Q4_K_M without full W8A8
+        # re-quantization or falling back to CPU fp16 (crushingly slow).
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
     },
     "qwen3-30b-a3b-q4-moe": {
         "display_name": "Qwen3 30B A3B (MoE, Q4_K_M)",
@@ -201,8 +208,29 @@ MODELS: dict[str, dict] = {
         "experts_per_token": 8,
         "vocab_size": 151936,
         "ctx_len_trained": 262144,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
     },
 }
+
+
+# DTYPE compatibility — which compute precisions an NPU can run natively.
+# A DTYPE is "supported" if the NPU's peak_tops_<dtype> > 0. The model's
+# compute_dtype must match at least one supported HW dtype, else the model
+# can only run via CPU fallback (not modeled — assume unusable).
+_DTYPE_ATTR = {
+    "fp16": "peak_tops_bf16",  # fp16 maps to bf16 tensor class on most SoCs
+    "bf16": "peak_tops_bf16",
+    "fp8":  "peak_tops_fp8",
+    "int8": "peak_tops_int8",
+}
+
+
+def hw_supports_dtype(hw: "Hardware", dtype: str) -> bool:
+    attr = _DTYPE_ATTR.get(dtype.lower())
+    if attr is None:
+        return False
+    return getattr(hw, attr, 0.0) > 0.0
 
 
 def model_active_bytes_per_token(model_key: str) -> float:
@@ -291,7 +319,7 @@ def project_llm(
              "decode_tok_s", "prefill_tok_s", "ttft_s", "host_ms",
              "total_s", "decode_s", "prefill_s", "feasibility": {...}}
     """
-    # 0) Memory feasibility check — a model that can't load is not a perf
+    # 0a) Memory feasibility check — a model that can't load is not a perf
     # question. Return early with a memory-only result.
     feasibility = memory_feasibility(model_key, hw, prompt_tokens + decode_tokens)
     if feasibility["verdict"] == "wont_fit":
@@ -300,16 +328,33 @@ def project_llm(
             "model_key": model_key,
             "workload_id": workload_id,
             "hw_name": hw.name,
-            "decode_tok_s": 0.0,
-            "prefill_tok_s": 0.0,
-            "ttft_s": None,
-            "host_ms": 0.0,
-            "prefill_s": 0.0,
-            "decode_s": 0.0,
-            "total_s": 0.0,
-            "decode_tokens": decode_tokens,
-            "prompt_tokens": prompt_tokens,
+            "decode_tok_s": 0.0, "prefill_tok_s": 0.0, "ttft_s": None,
+            "host_ms": 0.0, "prefill_s": 0.0, "decode_s": 0.0, "total_s": 0.0,
+            "decode_tokens": decode_tokens, "prompt_tokens": prompt_tokens,
             "feasibility": feasibility,
+        }
+
+    # 0b) DTYPE compatibility check — Q4_K_M is weight-only quant; matmul runs
+    # in fp16. An INT8-only NPU cannot execute this without either re-quant
+    # to W8A8 or CPU fp16 fallback (neither modeled). Mark incompatible cells.
+    model_meta = MODELS[model_key]
+    required_dtype = model_meta.get("compute_dtype", "fp16")
+    if not hw_supports_dtype(hw, required_dtype):
+        supported = [d for d in ("int8", "fp8", "bf16") if hw_supports_dtype(hw, d)]
+        return {
+            "source": "dtype_mismatch",
+            "model_key": model_key,
+            "workload_id": workload_id,
+            "hw_name": hw.name,
+            "decode_tok_s": 0.0, "prefill_tok_s": 0.0, "ttft_s": None,
+            "host_ms": 0.0, "prefill_s": 0.0, "decode_s": 0.0, "total_s": 0.0,
+            "decode_tokens": decode_tokens, "prompt_tokens": prompt_tokens,
+            "feasibility": feasibility,
+            "dtype_detail": {
+                "model_needs": required_dtype,
+                "quant_scheme": model_meta.get("quant_scheme"),
+                "hw_supports": supported or ["none"],
+            },
         }
 
     # 1) Measured wins
