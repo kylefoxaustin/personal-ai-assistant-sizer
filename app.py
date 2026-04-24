@@ -387,6 +387,55 @@ with st.expander("Annualized lifecycle cost — what-if retrain cadence",
     _ann_b.metric("Annual compute cost", f"${annual_dollars:.0f}")
     _ann_c.metric("Annual wall time on pod", f"{annual_wall:.0f} hrs")
 
+    # Side-by-side "what if this were an INT8-only tier" comparison.
+    # For FP-native tiers, show what the cost WOULD BE on a PTQ path
+    # (INT8-only silicon) so the user sees the lifecycle difference
+    # without having to switch tiers. For PTQ/QAT tiers, show what FP-native
+    # WOULD save (the counterfactual the silicon team should be asked about).
+    _alt_path_key = "ptq" if _path_key == "fp_native" else "fp_native"
+    _alt_cost = RETARGETING_COSTS[_alt_path_key]
+    _alt_hours = _alt_cost.engineer_hours * cycles_per_year
+    _alt_dollars = _alt_cost.dollars_per_cycle * cycles_per_year
+    _alt_wall = _alt_cost.wall_minutes * cycles_per_year / 60.0
+
+    _delta_hours = _alt_hours - annual_hours
+    _delta_dollars = _alt_dollars - annual_dollars
+
+    if _path_key == "fp_native":
+        _compare_label = (
+            f"**What you're avoiding** by picking an FP-native tier — "
+            f"if this were an INT8-only tier (LP4 / LP5-32bit / LP5-64bit) "
+            f"and you had to go through the PTQ + regression-gate cycle on "
+            f"every retrain at the same {_retrain_freq} cadence:"
+        )
+    else:
+        _compare_label = (
+            f"**Counterfactual savings** — if you picked an FP-native tier "
+            f"(LP5X / Mid / High / 5090) instead of this one, at the same "
+            f"{_retrain_freq} cadence you'd avoid:"
+        )
+
+    st.markdown("---")
+    st.markdown(_compare_label)
+    _cmp_a, _cmp_b, _cmp_c = st.columns(3)
+    _cmp_a.metric("Engineer hrs (on INT8-only)" if _path_key == "fp_native"
+                  else "Engineer hrs saved",
+                  f"{_alt_hours:.0f} hrs" if _path_key == "fp_native"
+                  else f"{_delta_hours:.0f} hrs",
+                  delta=f"+{_delta_hours:.0f} vs FP-native" if _path_key == "fp_native" else None,
+                  delta_color="inverse")
+    _cmp_b.metric("Compute cost (on INT8-only)" if _path_key == "fp_native"
+                  else "Compute cost saved",
+                  f"${_alt_dollars:.0f}" if _path_key == "fp_native"
+                  else f"${_delta_dollars:.0f}",
+                  delta=f"+${_delta_dollars:.0f} vs FP-native" if _path_key == "fp_native" else None,
+                  delta_color="inverse")
+    _cmp_c.metric("Wall time on pod" if _path_key == "fp_native"
+                  else "Wall time saved",
+                  f"{_alt_wall:.0f} hrs",
+                  delta=f"+{_alt_wall:.0f} vs FP-native" if _path_key == "fp_native" else None,
+                  delta_color="inverse")
+
     if _cost.regression_gate:
         st.warning(
             "⚠️ **Regression gate required** — this path requires human "
@@ -398,7 +447,10 @@ with st.expander("Annualized lifecycle cost — what-if retrain cadence",
     else:
         st.success(
             "🟢 **No regression gate** — deploy the training artifact "
-            "directly. Retargeting is free at the lifecycle level."
+            "directly. Retargeting is free at the lifecycle level. "
+            "**The numbers above stay at 0 regardless of retrain cadence "
+            "— that's the point.** The cost column only grows on INT8-only "
+            "tiers where every retrain triggers a quantize+regression cycle."
         )
 
 with st.expander("Why this cost exists — the hidden silicon trade-off",
