@@ -22,7 +22,8 @@ import streamlit as st
 from sizer.measured import get_bundle_summary, calibration_anchors
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
-    decode_tok_s_at_context,
+    decode_tok_s_at_context, project_what_if_decode_tok_s,
+    what_if_memory_feasibility,
 )
 from sizer.precision import (
     MEASURED_PRECISION_QUALITY, MEASURED_PRECISION_SPEED,
@@ -153,6 +154,71 @@ with st.sidebar:
              "CUDA path. 1.0 = parity; 0.5 = half the throughput at same BW. "
              "Only applied to projected tiers, not measured.",
     )
+
+    with st.expander("What-if model — project without bake-offs",
+                     expanded=False):
+        st.caption(
+            "Project decode tok/s + memory for a hypothetical model "
+            "(e.g. OLMoE 7B-A1B, DeepSeek-V2-Lite, Phi-3.5-MoE) without "
+            "running bake-offs. Uses BW-bound scaling law: "
+            "`tok_s(what_if) ≈ tok_s(anchor) × (anchor_bytes_per_token / "
+            "what_if_bytes_per_token)`. "
+            "Anchor = Qwen3-30B-A3B for MoE, Qwen 2.5 14B for dense — "
+            "architecture-class matched so routing/matmul efficiency "
+            "transfers correctly."
+        )
+        _whatif_enabled = st.checkbox(
+            "Enable what-if projection", value=False, key="k_whatif_enable",
+            help="When checked, a What-if projection card appears on the "
+                 "main page comparing this hypothetical model to Skippy's "
+                 "current base model on the selected tier.",
+        )
+        _whatif_name = st.text_input(
+            "Model name",
+            value="OLMoE 7B-A1B",
+            key="k_whatif_name",
+        )
+        _whatif_is_moe = st.checkbox(
+            "MoE architecture (active < total params)",
+            value=True, key="k_whatif_is_moe",
+            help="MoE models activate only a subset of experts per token. "
+                 "If checked, decode tok/s is driven by active_params, "
+                 "not total_params.",
+        )
+        _whatif_active_b = st.number_input(
+            "Active params (billions)",
+            min_value=0.1, max_value=100.0, value=1.0, step=0.1,
+            key="k_whatif_active_b",
+            help="Parameters active per decoded token. For dense models, "
+                 "equals total. For MoE, typically total / num_experts × "
+                 "experts_per_token (e.g. Qwen3-30B-A3B: 128 experts, "
+                 "8 active → ~3.3B active of 30B total).",
+        )
+        _whatif_total_b = st.number_input(
+            "Total params (billions)",
+            min_value=0.1, max_value=500.0, value=7.0, step=0.5,
+            key="k_whatif_total_b",
+            help="Total parameter count. Drives memory footprint. For "
+                 "dense = active.",
+        )
+        _whatif_bpp = st.number_input(
+            "Bytes per parameter",
+            min_value=0.25, max_value=4.0, value=0.57, step=0.01,
+            format="%.2f", key="k_whatif_bpp",
+            help="Effective bytes per param in quantized form. "
+                 "Q4_K_M ≈ 0.57 (matches Skippy's current deployment). "
+                 "Q8_0 ≈ 1.06. fp16 ≈ 2.00. FP8 ≈ 1.00.",
+        )
+        _whatif_hidden = st.number_input(
+            "Hidden dim (for KV cache estimate)",
+            min_value=512, max_value=16384, value=4096, step=256,
+            key="k_whatif_hidden",
+        )
+        _whatif_layers = st.number_input(
+            "Num layers (for KV cache estimate)",
+            min_value=8, max_value=128, value=32, step=1,
+            key="k_whatif_layers",
+        )
 
     with st.expander("About this sizer", expanded=False):
         bs = get_bundle_summary()
@@ -920,6 +986,124 @@ _curve_fig.update_layout(
                 xanchor="right", x=1),
 )
 st.plotly_chart(_curve_fig, width="stretch")
+
+# ─── What-if model projection card ───
+# Populated from the sidebar expander. Shown only when the user enables
+# it so we don't clutter the default view.
+if st.session_state.get("k_whatif_enable"):
+    st.markdown("---")
+    st.subheader(f"What-if: **{_whatif_name}** on {hw.name}")
+
+    _whatif_active_params = int(_whatif_active_b * 1e9)
+    _whatif_total_params = int(_whatif_total_b * 1e9)
+
+    # Project decode tok/s at the current workload's context length
+    _wi = project_what_if_decode_tok_s(
+        active_params=_whatif_active_params,
+        bytes_per_param=_whatif_bpp,
+        is_moe=_whatif_is_moe,
+        hw=hw,
+        ctx_tokens=prompt_tokens,
+        compiler_quality=compiler_quality,
+    )
+    # Memory feasibility at prompt+decode total context
+    _wm = what_if_memory_feasibility(
+        total_params=_whatif_total_params,
+        bytes_per_param=_whatif_bpp,
+        hw=hw,
+        context_tokens=prompt_tokens + decode_tokens,
+        hidden_dim=int(_whatif_hidden),
+        num_layers=int(_whatif_layers),
+    )
+
+    _wc_a, _wc_b, _wc_c, _wc_d = st.columns(4)
+    _wc_a.metric("Decode tok/s", f"{_wi['decode_tok_s']:.1f}",
+                 delta=f"{_wi['speedup_vs_current_skippy']:.2f}× vs current Skippy")
+    _wc_b.metric("Bytes/token decode",
+                 f"{_wi['bytes_per_token']/1e9:.2f} GB",
+                 delta=f"{_wi['anchor_bytes_per_token']/_wi['bytes_per_token']:.2f}× vs {_wi['anchor_display_name'].split(' ')[0]} anchor",
+                 delta_color="normal")
+    _wc_c.metric("VRAM required",
+                 f"{_wm['required_gb']:.1f} GB",
+                 delta=f"{_wm['headroom_gb']:+.1f} GB headroom",
+                 delta_color="normal")
+    _wc_d.metric("Feasibility", _wm['verdict'].replace("_", " "))
+
+    # Fit/tight/won't-fit banner
+    if _wm['verdict'] == "wont_fit":
+        st.error(
+            f"🔴 **Won't fit** on {hw.name} at {prompt_tokens + decode_tokens:,} "
+            f"token context. Weights = {_wm['breakdown']['weights_gb']} GB + "
+            f"KV = {_wm['breakdown']['kv_cache_gb']} GB + "
+            f"overhead = {_wm['breakdown']['overhead_gb']} GB = "
+            f"{_wm['required_gb']} GB, only {_wm['available_gb']} GB available. "
+            f"Drop context length, use a smaller quant, or move up a tier."
+        )
+    elif _wm['verdict'] == "tight":
+        st.warning(
+            f"🟡 **Tight fit** — {_wm['headroom_gb']} GB headroom (<15% of "
+            f"{_wm['available_gb']} GB). Any runtime overhead growth risks OOM."
+        )
+    else:
+        st.success(
+            f"🟢 **Fits comfortably** — {_wm['headroom_gb']} GB headroom on "
+            f"{hw.name} at {prompt_tokens + decode_tokens:,} token context."
+        )
+
+    # Honest summary of the projection
+    _speedup_vs_skippy = _wi['speedup_vs_current_skippy']
+    if _speedup_vs_skippy > 1.2:
+        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                    f"faster decode** than current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s) at this context. "
+                    f"Worth bake-offing to verify projected quality.")
+    elif _speedup_vs_skippy < 0.8:
+        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                    f"the decode** of current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s). Quality advantage "
+                    f"would need to justify the slowdown.")
+    else:
+        _verdict = (f"**{_whatif_name}** projects **similar decode** to "
+                    f"current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s, "
+                    f"{_speedup_vs_skippy:.2f}×). Net change depends on "
+                    f"quality delta, not speed.")
+    st.info(_verdict)
+
+    with st.expander("How this projection is computed", expanded=False):
+        st.markdown(f"""
+**Anchor model:** {_wi['anchor_display_name']} (architecture-class match)
+
+**Decode scaling law:** decode tok/s is roughly inversely proportional
+to active bytes per decoded token when BW-bound.
+
+- Anchor active bytes/token: {_wi['anchor_bytes_per_token']/1e9:.2f} GB
+  ({MODELS[_wi['anchor_model']]['active_params']/1e9:.1f}B active × {MODELS[_wi['anchor_model']]['bytes_per_param']:.2f} bytes/param)
+- What-if active bytes/token: {_wi['bytes_per_token']/1e9:.2f} GB
+  ({_whatif_active_b:.1f}B active × {_whatif_bpp:.2f} bytes/param)
+- Scaling factor: {_wi['speedup_vs_anchor']:.2f}× (anchor bytes / what-if bytes)
+
+**Projection math:** anchor decode tok/s at {prompt_tokens:,} context
+(interpolated from the 5 measured anchors) × scaling factor = what-if
+projection. This bakes in the same architecture-specific efficiency
+factors (MoE routing overhead, small-matmul inefficiency) the anchor
+model exhibits, so we don't need a separate efficiency constant.
+
+**What this misses:**
+- Per-layer attention shape differences (KV head ratio, head count)
+- Instruction-following / RAG-grounding quality — which is often the
+  actual reason to swap models. Quality requires a real eval run.
+- Runtime-specific optimizations (some models are better-supported in
+  llama-cpp / vLLM than others — real perf can differ from BW-bound
+  projection by ±20%)
+
+**How to validate this projection:** download the candidate model's
+Q4_K_M GGUF, run `eval/run_sizer_bakeoffs.py` against a Skippy instance
+serving it, regenerate `sizer_bundle.json`. The new anchors slot
+directly into the calibration curve.
+""")
+
+    st.markdown("---")
 
 with st.expander("Methodology — how this curve is built", expanded=False):
     st.markdown(f"""

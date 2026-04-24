@@ -258,6 +258,107 @@ def kv_cache_bytes_per_token(model_key: str, dtype_bytes: int = 2) -> float:
 RUNTIME_OVERHEAD_BYTES = 1_000_000_000
 
 
+# ───────────────────────── What-if model projection ─────────────────────────
+# Project decode tok/s for a hypothetical model (e.g. OLMoE, DeepSeek-V2-Lite,
+# a candidate replacement for Skippy's current Qwen3-30B-A3B) without running
+# bake-offs. Uses BW-bound decode scaling law:
+#
+#   decode_tok_s(what_if) ≈ decode_tok_s(anchor)
+#                           × (anchor_active_bytes_per_token
+#                              / what_if_active_bytes_per_token)
+#
+# Calibrated off the closest-matching measured architecture (MoE what-if
+# projects from Qwen3-30B-A3B anchor; dense what-if projects from Qwen 2.5
+# 14B anchor) so architecture-specific efficiency factors (MoE routing
+# overhead, small-matmul inefficiency) transfer correctly without needing
+# a separate efficiency constant.
+
+def project_what_if_decode_tok_s(
+    active_params: int, bytes_per_param: float, is_moe: bool,
+    hw: "Hardware", ctx_tokens: int, compiler_quality: float = 1.0,
+) -> dict:
+    """Project decode tok/s for a hypothetical model.
+
+    Returns {"decode_tok_s", "anchor_model", "anchor_decode_tok_s",
+             "bytes_per_token", "speedup_vs_current_skippy"}.
+    """
+    # Pick the architecture-matching anchor model
+    anchor_model_key = ("qwen3-30b-a3b-q4-moe" if is_moe
+                        else "qwen2.5-14b-q4-dense")
+    anchor_meta = MODELS[anchor_model_key]
+
+    anchor_bytes_per_token = (anchor_meta["active_params"]
+                               * anchor_meta["bytes_per_param"])
+    what_if_bytes_per_token = active_params * bytes_per_param
+
+    # Get the anchor's interpolated decode tok/s at the same context length
+    # on the same tier (this already handles BW scaling and compiler_quality)
+    anchor_result = decode_tok_s_at_context(
+        anchor_model_key, hw, ctx_tokens, compiler_quality=compiler_quality
+    )
+    anchor_tok_s = anchor_result["decode_tok_s"]
+
+    # BW-bound scaling: tok/s inversely proportional to bytes per token
+    scaling = anchor_bytes_per_token / what_if_bytes_per_token if what_if_bytes_per_token > 0 else 0
+    what_if_tok_s = anchor_tok_s * scaling
+
+    # Skippy's current baseline (MoE) on same tier + context for comparison
+    current_skippy = decode_tok_s_at_context(
+        "qwen3-30b-a3b-q4-moe", hw, ctx_tokens,
+        compiler_quality=compiler_quality,
+    )
+
+    return {
+        "decode_tok_s": what_if_tok_s,
+        "anchor_model": anchor_model_key,
+        "anchor_display_name": anchor_meta["display_name"],
+        "anchor_decode_tok_s": anchor_tok_s,
+        "bytes_per_token": what_if_bytes_per_token,
+        "anchor_bytes_per_token": anchor_bytes_per_token,
+        "speedup_vs_anchor": scaling,
+        "current_skippy_tok_s": current_skippy["decode_tok_s"],
+        "speedup_vs_current_skippy": (what_if_tok_s /
+                                       current_skippy["decode_tok_s"])
+                                      if current_skippy["decode_tok_s"] > 0 else 0,
+    }
+
+
+def what_if_memory_feasibility(
+    total_params: int, bytes_per_param: float, hw: "Hardware",
+    context_tokens: int, hidden_dim: int = 4096, num_layers: int = 40,
+    kv_head_ratio: float = 0.25,
+) -> dict:
+    """Rough memory feasibility for a hypothetical model. Uses reasonable
+    defaults for KV cache geometry when user doesn't know the exact
+    architecture (40 layers, 4096 hidden, 1/4 GQA ratio are typical for
+    10B-40B-class models).
+    """
+    weights_b = total_params * bytes_per_param
+    # KV: num_layers × 2 (K+V) × hidden_dim × (kv/attn ratio) × 2 bytes (fp16)
+    kv_per_token = num_layers * 2 * hidden_dim * kv_head_ratio * 2
+    kv_b = kv_per_token * context_tokens
+    total_required = weights_b + kv_b + RUNTIME_OVERHEAD_BYTES
+    available = hw.mem_capacity_gb * 1_000_000_000
+    headroom = available - total_required
+    if headroom < 0:
+        verdict = "wont_fit"
+    elif headroom < available * 0.15:
+        verdict = "tight"
+    else:
+        verdict = "fits"
+    return {
+        "verdict": verdict,
+        "required_gb": round(total_required / 1e9, 2),
+        "available_gb": round(available / 1e9, 2),
+        "headroom_gb": round(headroom / 1e9, 2),
+        "breakdown": {
+            "weights_gb": round(weights_b / 1e9, 2),
+            "kv_cache_gb": round(kv_b / 1e9, 3),
+            "overhead_gb": round(RUNTIME_OVERHEAD_BYTES / 1e9, 2),
+        },
+    }
+
+
 def _log_linear_interpolate(anchors: list[tuple[int, float]],
                              ctx_tokens: int) -> tuple[float, str]:
     """Linearly interpolate decode_tok_s on a log(context) axis.
