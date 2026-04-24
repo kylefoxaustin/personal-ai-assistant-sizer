@@ -383,6 +383,92 @@ def gates_per_cycle(path_key: str) -> dict[str, int]:
     }.get(path_key, {"gate_a": 1, "gate_b": 0})
 
 
+# ───────────────────────── Deployment model ─────────────────────────
+# How the product gets to users fundamentally shapes the regression-testing
+# cost. Two primary deployment patterns have very different cost curves:
+#
+#   - cloud_service: central vendor retrains frequently (daily to weekly),
+#     ships inference via API. User count doesn't affect eval cost but
+#     high cadence × large user base demands fast iteration.
+#
+#   - local_learning: vendor ships a base model, users run it on-device
+#     and adapt locally. Central retrain cadence is slow (quarterly or
+#     semi-annual) because OTA updates are expensive and can't hot-patch
+#     deployed devices. Per-user adaptation is the USER's cost, not the
+#     vendor's regression burden. But new QA burdens appear (cross-hardware
+#     matrix, adaptation-drift, staged-rollout telemetry) that offset some
+#     of the savings.
+
+@dataclass(frozen=True)
+class DeploymentModel:
+    key: str
+    display_name: str
+    description: str
+    default_cadence: str   # one of: daily, weekly, monthly, quarterly, annually
+    default_rigor: str     # one of: smoke, nightly, pre_release
+    additional_qa_burdens: list[str]
+    notes: str
+
+
+DEPLOYMENT_MODELS: dict[str, DeploymentModel] = {
+    "cloud_service": DeploymentModel(
+        key="cloud_service",
+        display_name="Cloud service (central vendor retrains, API inference)",
+        description="Vendor operates the model centrally, serves inference "
+                    "via API, retrains frequently to incorporate new data / "
+                    "improve capabilities. User count drives inference cost "
+                    "but doesn't multiply regression cost.",
+        default_cadence="weekly",
+        default_rigor="nightly",
+        additional_qa_burdens=[],
+        notes="The \"ChatGPT-style\" deployment pattern. Frequent retrains "
+              "make the Gate A / Gate B tax compound quickly — at daily "
+              "cadence + nightly rigor + INT8-only silicon you're near the "
+              "capacity ceiling of a single pod. Scale with more infra.",
+    ),
+    "local_learning": DeploymentModel(
+        key="local_learning",
+        display_name="Local learning (base model + on-device adaptation)",
+        description="Vendor ships a base model; each user runs it on-device "
+                    "with local adaptation (LoRA fine-tuning, RAG over "
+                    "local docs, in-context learning). Central retrain "
+                    "cadence is slow — can't hot-patch deployed devices "
+                    "and OTA updates cost bandwidth + user disruption.",
+        default_cadence="quarterly",
+        default_rigor="pre_release",
+        additional_qa_burdens=[
+            "**Cross-hardware matrix validation** — at N users you target "
+            "dozens of device SKUs. Base model has to validate on each "
+            "hardware tier, not just the dev box. Adds ~1.5× compute per gate.",
+            "**Adaptation-drift testing** — synthesize adversarial "
+            "personalization distributions pre-release. Does the base "
+            "model degrade catastrophically under some user's weird "
+            "local fine-tune?",
+            "**Update-rollback safety** — if v2 breaks someone's "
+            "personalized v1 adaptation, you need tested rollback paths "
+            "and data-migration guarantees.",
+            "**Staged-rollout telemetry** — 5% canary → 25% → 100% with "
+            "privacy-preserving crash / perf metrics. Different infra "
+            "than output-grading; closer to platform engineering than "
+            "ML eval.",
+            "**Adversarial-adaptation safety** — can a malicious user's "
+            "local fine-tune jailbreak your base model's safety? Real "
+            "concern for products that allow on-device adaptation. "
+            "Red-team probes needed, not just output-quality evals.",
+            "**On-device quantization cost** — if users run weight-update "
+            "fine-tuning locally AND the target device is INT8-only, "
+            "Gate-B-equivalent cost moves to each user's compute / battery "
+            "/ storage. Vendor saves $ but users pay in resources.",
+        ],
+        notes="The \"Skippy-as-a-product\" pattern. Slow central cadence "
+              "keeps Gate A+B cost small even at pre-release rigor "
+              "(~$16K/yr + 0.2 FTE at quarterly × pre-release × INT8). "
+              "But the additional QA burdens above are real and not "
+              "captured in the Gate A/B ladder — factor them separately.",
+    ),
+}
+
+
 def annualized_testing_cost(path_key: str, rigor_key: str,
                              cycles_per_year: int) -> dict:
     """Compute total annualized testing cost for a (path, rigor, cadence)

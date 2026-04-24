@@ -27,6 +27,7 @@ from sizer.precision import (
     capability_color, quality_badge_text, quality_color,
     RETARGETING_COSTS, deployment_path_for_tier, retargeting_cost_color,
     REGRESSION_RIGOR, gates_per_cycle, annualized_testing_cost,
+    DEPLOYMENT_MODELS,
 )
 
 
@@ -338,6 +339,30 @@ st.caption(
     f"customer, per fine-tune."
 )
 
+# Deployment model selector — drives default cadence + rigor since a
+# cloud-service product and a local-learning product have fundamentally
+# different regression-testing cost curves. User can override the
+# defaults inside the annualized-cost expander below.
+_deployment_key = st.selectbox(
+    "Deployment model",
+    options=list(DEPLOYMENT_MODELS.keys()),
+    format_func=lambda k: DEPLOYMENT_MODELS[k].display_name,
+    index=0,
+    key="k_deployment",
+    help="How does this product get to users? Cloud-service products "
+         "retrain frequently (the Gate A+B tax compounds quickly). "
+         "Local-learning products retrain centrally on a slow cadence "
+         "but add new QA burdens around per-device validation, "
+         "adaptation drift, and staged rollouts.",
+)
+_deployment = DEPLOYMENT_MODELS[_deployment_key]
+
+with st.container():
+    st.info(f"**{_deployment.display_name}** — {_deployment.description} "
+            f"*Default: {_deployment.default_cadence} retrain × "
+            f"{_deployment.default_rigor.replace('_', '-')} rigor. "
+            f"Override below if your team operates differently.*")
+
 # Figure out which retargeting path this tier needs for Skippy's current model
 _skippy_model_dtype = MODELS[model_key].get("compute_dtype", "fp16")
 _path_key = deployment_path_for_tier(hw.name, _skippy_model_dtype)
@@ -363,28 +388,34 @@ _rc_col_d.metric("Engineer hours per cycle", f"{_cost.engineer_hours:.1f} hrs")
 # rigor, we project annualized overhead with Gate A / Gate B split.
 with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor",
                  expanded=False):
+    _cadence_options = ["daily", "weekly", "monthly", "quarterly", "annually"]
+    _rigor_options = list(REGRESSION_RIGOR.keys())
     _cad_col, _rig_col = st.columns(2)
     with _cad_col:
+        # Widget key namespaced by deployment so changing deployment model
+        # resets the selection to that model's default.
         _retrain_freq = st.selectbox(
             "How often does Skippy retrain?",
-            options=["daily", "weekly", "monthly", "quarterly", "annually"],
-            index=1,
-            key="k_retrain_freq",
-            help="Pick the retrain cadence. The sizer multiplies per-cycle "
-                 "cost by the matching cycles-per-year to project annual "
-                 "overhead.",
+            options=_cadence_options,
+            index=_cadence_options.index(_deployment.default_cadence),
+            key=f"k_retrain_freq_{_deployment_key}",
+            help="Retrain cadence. Cloud-service products typically run "
+                 "daily or weekly; local-learning products quarterly or "
+                 "semi-annual (OTA updates are expensive and can't "
+                 "hot-patch deployed devices).",
         )
     with _rig_col:
         _rigor_key = st.selectbox(
             "Regression testing rigor",
-            options=list(REGRESSION_RIGOR.keys()),
+            options=_rigor_options,
             format_func=lambda k: REGRESSION_RIGOR[k].display_name,
-            index=0,
-            key="k_rigor",
-            help="How thorough is the regression suite run on each retrain? "
-                 "Smoke approximates today's 44-prompt harness. Nightly is "
-                 "the floor for serious production. Pre-release adds human "
-                 "red-team and domain-expert review.",
+            index=_rigor_options.index(_deployment.default_rigor),
+            key=f"k_rigor_{_deployment_key}",
+            help="How thorough is the regression suite? Smoke approximates "
+                 "today's 44-prompt harness — research-grade only. Nightly "
+                 "is the floor for serious production. Pre-release adds "
+                 "human red-team and domain-expert review (required for "
+                 "local-learning products where OTA rollback is costly).",
         )
     cycles_per_year = {
         "daily": 365, "weekly": 52, "monthly": 12,
@@ -538,6 +569,25 @@ with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor"
             st.error(f"🔴 **Needs {_alt_pods_needed:.1f} parallel pods** AND "
                      f"**{_alt_ftes_needed:.0f} full-time engineers**. "
                      f"Team + datacenter-scale organizational commitment.")
+
+    # Additional QA burdens specific to this deployment model — these are
+    # NOT captured in the Gate A/B math above and represent a separate
+    # cost bucket the team needs to staff and budget.
+    if _deployment.additional_qa_burdens:
+        st.markdown("---")
+        st.markdown(
+            f"**Additional QA burdens specific to "
+            f"{_deployment.display_name.split(' (')[0]}** "
+            f"(NOT captured in Gate A+B cost above):"
+        )
+        st.caption(
+            "These are separate cost buckets — per-product-launch and "
+            "per-OTA-release spend that doesn't track with the retrain "
+            "cadence. Quantifying them requires product-specific data; "
+            "they're called out so the team doesn't forget to budget them."
+        )
+        for burden in _deployment.additional_qa_burdens:
+            st.markdown(f"- {burden}")
 
     if _rigor.human_review:
         st.warning(
