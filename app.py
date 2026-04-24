@@ -475,6 +475,70 @@ with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor"
     ]
     st.dataframe(pd.DataFrame(_gate_rows), width="stretch", hide_index=True)
 
+    # ── Parallelism / capacity check ──
+    # If annual wall-hours exceeds 8,760 (hours in a year), the gates
+    # literally can't run sequentially on one pod — you need parallel
+    # infrastructure. Same for engineer hours vs. FTE capacity (~1,800
+    # productive hrs/year per engineer). Surface this explicitly —
+    # at some combinations of cadence × rigor, the cost isn't a
+    # line item, it's a team + a datacenter.
+    HOURS_IN_YEAR = 8760
+    FTE_HOURS_PER_YEAR = 1800  # productive engineering hours
+
+    _pods_needed = _testing['total_wall_hours'] / HOURS_IN_YEAR
+    _ftes_needed = _testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
+    _alt_pods_needed = _alt_testing['total_wall_hours'] / HOURS_IN_YEAR
+    _alt_ftes_needed = _alt_testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
+
+    st.markdown("---")
+    st.markdown(
+        "**Capacity check — does this fit in a single pod / single engineer?**"
+    )
+    st.caption(
+        "A year has 8,760 hours. One pod running 24/7 at full duty can't "
+        "exceed that. An FTE produces ~1,800 productive hours/year. If "
+        "either number here is > 1, you need parallel infrastructure or "
+        "more people — this is no longer a line-item cost."
+    )
+    _cap_a, _cap_b = st.columns(2)
+    with _cap_a:
+        st.markdown(f"**{hw.name} (your tier)**")
+        _pods_str = f"{_pods_needed:.1f} pods needed"
+        _ftes_str = f"{_ftes_needed:.1f} FTEs needed"
+        if _pods_needed < 0.3 and _ftes_needed < 0.3:
+            st.success(f"🟢 Fits easily on 1 pod ({_pods_needed:.2f}× duty), "
+                       f"~{_ftes_needed:.2f} FTE needed")
+        elif _pods_needed < 1.0 and _ftes_needed < 1.0:
+            st.info(f"🟡 1 pod at {_pods_needed*100:.0f}% duty, "
+                    f"~{_ftes_needed:.1f} FTE")
+        elif _pods_needed < 3.0 or _ftes_needed < 3.0:
+            st.warning(f"🟠 **Needs {_pods_needed:.1f} parallel pods** running "
+                       f"24/7, **{_ftes_needed:.1f} FTEs** dedicated to "
+                       f"regression testing. Not a line item anymore.")
+        else:
+            st.error(f"🔴 **Needs {_pods_needed:.1f} parallel pods** running "
+                     f"24/7 AND **{_ftes_needed:.0f} full-time engineers**. "
+                     f"At this scale you're staffing a team + a datacenter "
+                     f"just to gate regression. Reconsider cadence × rigor.")
+    with _cap_b:
+        _alt_tier_label = ("INT8-only counterfactual" if _path_key == "fp_native"
+                           else "FP-native counterfactual")
+        st.markdown(f"**{_alt_tier_label}**")
+        if _alt_pods_needed < 0.3 and _alt_ftes_needed < 0.3:
+            st.success(f"🟢 Fits easily on 1 pod ({_alt_pods_needed:.2f}× duty), "
+                       f"~{_alt_ftes_needed:.2f} FTE needed")
+        elif _alt_pods_needed < 1.0 and _alt_ftes_needed < 1.0:
+            st.info(f"🟡 1 pod at {_alt_pods_needed*100:.0f}% duty, "
+                    f"~{_alt_ftes_needed:.1f} FTE")
+        elif _alt_pods_needed < 3.0 or _alt_ftes_needed < 3.0:
+            st.warning(f"🟠 **Needs {_alt_pods_needed:.1f} parallel pods**, "
+                       f"**{_alt_ftes_needed:.1f} FTEs**. Team + datacenter "
+                       f"budget, not line-item cost.")
+        else:
+            st.error(f"🔴 **Needs {_alt_pods_needed:.1f} parallel pods** AND "
+                     f"**{_alt_ftes_needed:.0f} full-time engineers**. "
+                     f"Team + datacenter-scale organizational commitment.")
+
     if _rigor.human_review:
         st.warning(
             f"⚠️ **Human red-team / domain-expert review required at "
