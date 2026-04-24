@@ -512,6 +512,87 @@ with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor"
                     f"{'required' if _rigor.human_review else 'not required'}")
         st.markdown(f"**Notes:** {_rigor.notes}")
 
+    with st.expander("Sources & defensibility — where these numbers come from",
+                     expanded=False):
+        st.markdown("""
+**Honest disclosure:** per-cycle regression-testing costs are **not
+published** in any industry report. Stanford HAI AI Index, Epoch AI,
+SemiAnalysis — none of them break out eval-pipeline cost as a line item.
+Big AI shops (Anthropic, OpenAI, DeepMind, Meta) treat eval
+infrastructure as a competitive moat. These numbers are engineering
+estimates, not sourced from a citable figure.
+
+**What IS publicly sourceable and brackets the estimates:**
+
+**LLM-as-judge API pricing** — directly citable to vendor pages. At
+nightly-rigor scale (~10K prompts × ~1.5K tokens/prompt with
+Claude 3.5 Sonnet at $3/M input + $15/M output):
+
+- Anthropic: [anthropic.com/pricing](https://www.anthropic.com/pricing)
+  → Claude 3.5 Sonnet: $3/M input, $15/M output
+- OpenAI: [openai.com/api/pricing](https://openai.com/api/pricing)
+  → GPT-4o: $2.50/M input, $10/M output
+- Google: [ai.google.dev/pricing](https://ai.google.dev/pricing)
+  → Gemini 1.5 Pro: $1.25/M input, $5/M output
+
+**Derived nightly-gate math:** 10K prompts × (1K input + 500 output
+tokens) via Claude Sonnet = 10M input + 5M output = **$30 + $75 = ~$105
+in judge API fees alone** per gate. Our $150/gate estimate adds
+~$45 infra/compute overhead for the model-under-test. Defensible.
+
+**Red-team scale** — citable as *hours-order-of-magnitude* evidence for
+the pre-release rigor tier:
+
+- Ganguli et al. 2022, "Red Teaming Language Models to Reduce Harms"
+  (Anthropic, [arXiv:2209.07858](https://arxiv.org/abs/2209.07858)):
+  published 38,961 red-team attempts across 4 models using Surge AI
+  crowdworkers. $ cost NOT published.
+- GPT-4 System Card (OpenAI, March 2023): 50+ external red-teamers
+  over ~6 months. Implies thousands of expert-hours per major release.
+  Our 40-hr pre-release-gate estimate is a *lower bound*, not upper.
+- Gemini Tech Report (DeepMind): describes eval framework, no costs.
+
+**RLHF / human-annotation pricing** — adjacent comparable (annotation,
+not grading):
+
+- Scale AI / Surge AI: public marketing quotes $1-5 per pairwise
+  comparison; $20-50/hr for expert red-teamers (reported in *The
+  Information*, *Semafor* 2023-2024; no authoritative rate card).
+- Anthropic HH-RLHF dataset (Bai et al. 2022,
+  [arXiv:2204.05862](https://arxiv.org/abs/2204.05862)): 161K
+  comparisons collected. At rumored $1-3 each → ~$160-480K dataset
+  cost. Anthropic has not officially confirmed.
+
+**The "hidden tech debt in ML" argument** — qualitative foundation:
+
+- Sculley et al. 2015, "Hidden Technical Debt in ML Systems"
+  (Google, NeurIPS). Foundational on ongoing ML maintenance cost —
+  qualitative, not quantified.
+- Paleyes et al. 2022, "Challenges in Deploying Machine Learning"
+  ([arXiv:2011.09926](https://arxiv.org/abs/2011.09926)). MLOps survey
+  documents regression testing as a known cost center, doesn't
+  quantify.
+
+**How to defend these numbers in a silicon review:**
+
+1. Cite the vendor pricing pages for the API-fee floor (directly
+   citable)
+2. Cite Ganguli 2022 + GPT-4 system card for red-team scale
+   (order-of-magnitude evidence)
+3. Acknowledge the infra/engineer-hour multipliers as engineering
+   estimate — invite counter-proposals rather than defending specific
+   numbers
+4. Frame the conclusion as "the DELTA between FP-native and INT8-only
+   silicon is the Gate B full-suite cost, which scales linearly with
+   rigor tier — whatever rigor tier your team operates at, that
+   number is the recurring lifecycle tax"
+
+The structural argument (tiered testing, Gate A + Gate B doubling,
+lifecycle vs BOM cost) doesn't depend on the exact numbers being
+right. The specific $ values are calibration targets to replace with
+your own if your organization has measured data.
+""")
+
 with st.expander("Why this cost exists — the hidden silicon trade-off",
                  expanded=False):
     st.markdown(f"""
