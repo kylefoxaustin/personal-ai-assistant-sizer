@@ -283,3 +283,140 @@ def retargeting_cost_color(path: str) -> str:
         "ptq":        "#f59e0b",  # amber — real cost per iteration
         "qat":        "#ef4444",  # red — expensive
     }.get(path, "#6b7280")
+
+
+# ───────────────────────── Regression testing rigor ─────────────────────────
+# Real production AI systems run tiered regression gates — smoke (every PR)
+# vs nightly vs pre-release (major versions) — because full-rigor testing is
+# orders of magnitude more expensive than catastrophic-regression-catching.
+#
+# The key insight for the silicon-architecture conversation: every retrain
+# has TWO gates that must pass on INT8-only silicon, one on FP-native:
+#   - Gate A: "did the new training do what we wanted?" — paid every retrain
+#     regardless of silicon target
+#   - Gate B: "did the quantization damage anything Gate A validated?" —
+#     ONLY needed on INT8-only silicon (FP-native skips this entirely)
+#
+# Gate B isn't cheaper than Gate A — same test set, different model. You
+# can't subset "just quantization-sensitive tests" because you don't know
+# which are sensitive until all run. So the silicon-choice delta per retrain
+# is one full Gate B invocation at the chosen rigor tier.
+
+@dataclass(frozen=True)
+class RegressionRigor:
+    """Production regression-testing cost per gate invocation.
+    A 'gate' is one full pass of the test suite against one model variant.
+    Costs below are per-gate — for INT8-only silicon you pay this TWICE
+    per retrain (Gate A for training-validation, Gate B for quant-validation).
+    """
+    tier: str
+    display_name: str
+    test_count: str
+    wall_hours_per_gate: float
+    dollars_per_gate: float
+    engineer_hours_per_gate: float
+    human_review: bool
+    notes: str
+
+
+REGRESSION_RIGOR: dict[str, RegressionRigor] = {
+    "smoke": RegressionRigor(
+        tier="smoke",
+        display_name="Smoke (PR-gate — catastrophic-regression only)",
+        test_count="100-500 prompts",
+        wall_hours_per_gate=0.5,
+        dollars_per_gate=10.0,
+        engineer_hours_per_gate=1.5,
+        human_review=False,
+        notes="Approximates what our 44-prompt × 3-sample harness does today. "
+              "Catches catastrophic regressions (model broken, gibberish, "
+              "template mismatch) but misses subtle drift in 1-in-10K prompts, "
+              "long-context stability, structured-output format consistency, "
+              "and safety-alignment regressions. Appropriate for research "
+              "iteration, NOT for production deployment signoff.",
+    ),
+    "nightly": RegressionRigor(
+        tier="nightly",
+        display_name="Nightly (automated, LLM-judge)",
+        test_count="5K-20K prompts",
+        wall_hours_per_gate=10.0,
+        dollars_per_gate=150.0,
+        engineer_hours_per_gate=6.0,
+        human_review=False,
+        notes="Extended eval across curated benchmarks (MMLU-style, HumanEval, "
+              "RAG-QA at scale) + LLM-as-judge grading at $0.01-0.05/prompt. "
+              "No human-in-loop. Catches real capability loss in specific "
+              "categories but not subtle safety/bias drift or multi-turn "
+              "coherence. Baseline for serious production validation.",
+    ),
+    "pre_release": RegressionRigor(
+        tier="pre_release",
+        display_name="Pre-release (full suite + human red-team)",
+        test_count="50K+ prompts + human review",
+        wall_hours_per_gate=80.0,
+        dollars_per_gate=2000.0,
+        engineer_hours_per_gate=40.0,
+        human_review=True,
+        notes="Full automated suite + red-team adversarial probing + domain-"
+              "expert review on specialized tasks + safety/bias audit. "
+              "Required before a major version bump. Days to weeks of "
+              "calendar time. Real production AI shops (Anthropic/OpenAI/"
+              "DeepMind/Meta) operate at this tier for major releases.",
+    ),
+}
+
+
+def gates_per_cycle(path_key: str) -> dict[str, int]:
+    """How many gates fire per retrain cycle on this deployment path?
+
+    - Gate A: "did the new training do what we wanted?"
+    - Gate B: "did the quantization damage anything Gate A validated?"
+
+    fp_native and weight-only paths only pay Gate A. PTQ and QAT pay
+    both A and B (the quant introduces a separate axis of risk that
+    needs its own validation pass)."""
+    return {
+        "fp_native":  {"gate_a": 1, "gate_b": 0},
+        "weight_only": {"gate_a": 1, "gate_b": 0},
+        "ptq":        {"gate_a": 1, "gate_b": 1},
+        "qat":        {"gate_a": 1, "gate_b": 1},
+    }.get(path_key, {"gate_a": 1, "gate_b": 0})
+
+
+def annualized_testing_cost(path_key: str, rigor_key: str,
+                             cycles_per_year: int) -> dict:
+    """Compute total annualized testing cost for a (path, rigor, cadence)
+    combination. Returns separate Gate A / Gate B line items + totals.
+
+    FP-native silicon pays Gate A only; INT8-only silicon pays both.
+    The silicon-choice DELTA is exactly the Gate B line (what you
+    avoid by picking FP-native)."""
+    gates = gates_per_cycle(path_key)
+    rigor = REGRESSION_RIGOR[rigor_key]
+
+    gate_a_cycles = gates["gate_a"] * cycles_per_year
+    gate_b_cycles = gates["gate_b"] * cycles_per_year
+
+    return {
+        "rigor": rigor.display_name,
+        "cycles_per_year": cycles_per_year,
+        "gate_a": {
+            "invocations": gate_a_cycles,
+            "dollars": gate_a_cycles * rigor.dollars_per_gate,
+            "engineer_hours": gate_a_cycles * rigor.engineer_hours_per_gate,
+            "wall_hours": gate_a_cycles * rigor.wall_hours_per_gate,
+        },
+        "gate_b": {
+            "invocations": gate_b_cycles,
+            "dollars": gate_b_cycles * rigor.dollars_per_gate,
+            "engineer_hours": gate_b_cycles * rigor.engineer_hours_per_gate,
+            "wall_hours": gate_b_cycles * rigor.wall_hours_per_gate,
+        },
+        "total_dollars":
+            (gate_a_cycles + gate_b_cycles) * rigor.dollars_per_gate,
+        "total_engineer_hours":
+            (gate_a_cycles + gate_b_cycles) * rigor.engineer_hours_per_gate,
+        "total_wall_hours":
+            (gate_a_cycles + gate_b_cycles) * rigor.wall_hours_per_gate,
+        "human_review": rigor.human_review,
+    }

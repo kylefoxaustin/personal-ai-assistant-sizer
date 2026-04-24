@@ -26,6 +26,7 @@ from sizer.precision import (
     tier_precision_capability, capability_badge, capability_label,
     capability_color, quality_badge_text, quality_color,
     RETARGETING_COSTS, deployment_path_for_tier, retargeting_cost_color,
+    REGRESSION_RIGOR, gates_per_cycle, annualized_testing_cost,
 )
 
 
@@ -358,87 +359,158 @@ _rc_col_b.metric("Wall time per cycle", f"{_cost.wall_minutes} min")
 _rc_col_c.metric("Compute cost per cycle", f"${_cost.dollars_per_cycle:.2f}")
 _rc_col_d.metric("Engineer hours per cycle", f"{_cost.engineer_hours:.1f} hrs")
 
-# Annualized what-if: user picks retrain cadence, we project annual overhead
-with st.expander("Annualized lifecycle cost — what-if retrain cadence",
+# Annualized what-if: user picks retrain cadence + regression-testing
+# rigor, we project annualized overhead with Gate A / Gate B split.
+with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor",
                  expanded=False):
-    _retrain_freq = st.selectbox(
-        "How often does Skippy retrain?",
-        options=["daily", "weekly", "monthly", "quarterly", "annually"],
-        index=1,
-        key="k_retrain_freq",
-        help="Pick the retrain cadence. The sizer multiplies per-cycle cost "
-             "by the matching cycles-per-year to project annual overhead.",
-    )
+    _cad_col, _rig_col = st.columns(2)
+    with _cad_col:
+        _retrain_freq = st.selectbox(
+            "How often does Skippy retrain?",
+            options=["daily", "weekly", "monthly", "quarterly", "annually"],
+            index=1,
+            key="k_retrain_freq",
+            help="Pick the retrain cadence. The sizer multiplies per-cycle "
+                 "cost by the matching cycles-per-year to project annual "
+                 "overhead.",
+        )
+    with _rig_col:
+        _rigor_key = st.selectbox(
+            "Regression testing rigor",
+            options=list(REGRESSION_RIGOR.keys()),
+            format_func=lambda k: REGRESSION_RIGOR[k].display_name,
+            index=0,
+            key="k_rigor",
+            help="How thorough is the regression suite run on each retrain? "
+                 "Smoke approximates today's 44-prompt harness. Nightly is "
+                 "the floor for serious production. Pre-release adds human "
+                 "red-team and domain-expert review.",
+        )
     cycles_per_year = {
         "daily": 365, "weekly": 52, "monthly": 12,
         "quarterly": 4, "annually": 1,
     }[_retrain_freq]
+    _rigor = REGRESSION_RIGOR[_rigor_key]
 
-    annual_hours = _cost.engineer_hours * cycles_per_year
-    annual_dollars = _cost.dollars_per_cycle * cycles_per_year
-    annual_wall = _cost.wall_minutes * cycles_per_year / 60.0  # hrs
+    # Compute Gate A / Gate B breakdown for this (path, rigor, cadence)
+    _testing = annualized_testing_cost(_path_key, _rigor_key, cycles_per_year)
+    _gates = gates_per_cycle(_path_key)
 
-    # Counterfactual comparison FIRST — the cost shock lands before the
-    # relief. If the user picked an FP-native tier, show what PTQ (INT8-only
-    # silicon) would cost at this cadence. If they picked PTQ/QAT, show
-    # what FP-native would save.
+    # Alt-path (counterfactual) for the comparison story
     _alt_path_key = "ptq" if _path_key == "fp_native" else "fp_native"
-    _alt_cost = RETARGETING_COSTS[_alt_path_key]
-    _alt_hours = _alt_cost.engineer_hours * cycles_per_year
-    _alt_dollars = _alt_cost.dollars_per_cycle * cycles_per_year
-    _alt_wall = _alt_cost.wall_minutes * cycles_per_year / 60.0
+    _alt_testing = annualized_testing_cost(_alt_path_key, _rigor_key,
+                                           cycles_per_year)
 
-    _delta_hours = _alt_hours - annual_hours
-    _delta_dollars = _alt_dollars - annual_dollars
-
+    # Counterfactual cost shock FIRST — what the choice WOULD cost on the
+    # other precision-path at this rigor tier
     if _path_key == "fp_native":
         st.markdown(
             f"**If this were an INT8-only tier** (LP4 / LP5-32bit / LP5-64bit) "
-            f"and you had to run the PTQ + regression-gate cycle on every "
-            f"retrain at **{_retrain_freq}** cadence ({cycles_per_year} cycles/yr):"
+            f"and you had to run both Gate A (training-validation) AND Gate B "
+            f"(quant-validation) at **{_rigor.display_name.split(' (')[0]}** "
+            f"rigor, **{_retrain_freq}** cadence ({cycles_per_year} cycles/yr):"
         )
         _cmp_a, _cmp_b, _cmp_c = st.columns(3)
-        _cmp_a.metric("Annual engineer time", f"{_alt_hours:.0f} hrs")
-        _cmp_b.metric("Annual compute cost", f"${_alt_dollars:.0f}")
-        _cmp_c.metric("Annual wall time on pod", f"{_alt_wall:.0f} hrs")
+        _cmp_a.metric("Annual engineer time",
+                      f"{_alt_testing['total_engineer_hours']:.0f} hrs")
+        _cmp_b.metric("Annual compute cost",
+                      f"${_alt_testing['total_dollars']:,.0f}")
+        _cmp_c.metric("Annual wall time on pod",
+                      f"{_alt_testing['total_wall_hours']:.0f} hrs")
+        st.caption(
+            f"Breakdown: Gate A = {_alt_testing['gate_a']['invocations']} "
+            f"invocations @ ${_rigor.dollars_per_gate:.0f}/gate = "
+            f"${_alt_testing['gate_a']['dollars']:,.0f}. "
+            f"Gate B = {_alt_testing['gate_b']['invocations']} invocations @ "
+            f"${_rigor.dollars_per_gate:.0f}/gate = "
+            f"${_alt_testing['gate_b']['dollars']:,.0f}. "
+            f"**Gate B is the silicon-choice delta.**"
+        )
     else:
+        _savings_dollars = _alt_testing['total_dollars'] - _testing['total_dollars']
+        _savings_hours = _alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']
         st.markdown(
             f"**If you picked an FP-native tier instead** "
-            f"(LP5X / Mid / High / 5090) at the same **{_retrain_freq}** "
-            f"cadence ({cycles_per_year} cycles/yr), you'd save:"
+            f"(LP5X / Mid / High / 5090) at the same rigor + cadence, "
+            f"you'd avoid Gate B entirely. Savings:"
         )
         _cmp_a, _cmp_b, _cmp_c = st.columns(3)
-        _cmp_a.metric("Engineer hrs saved", f"{_delta_hours:.0f} hrs")
-        _cmp_b.metric("Compute cost saved", f"${_delta_dollars:.0f}")
-        _cmp_c.metric("Pod wall time saved",
-                      f"{(annual_wall - _alt_wall):.0f} hrs")
+        _cmp_a.metric("Engineer hrs saved", f"{_savings_hours:.0f} hrs")
+        _cmp_b.metric("Compute cost saved", f"${_savings_dollars:,.0f}")
+        _cmp_c.metric("Gate B invocations avoided",
+                      f"{_testing['gate_b']['invocations']:.0f}")
 
     st.markdown("---")
+
+    # Your actual tier at this rigor + cadence, with Gate A/B breakdown
     st.markdown(
-        f"**Your actual cost** at **{_retrain_freq}** retrains, shipping to "
-        f"**{hw.name}**:"
+        f"**Your actual cost** at **{_rigor.display_name.split(' (')[0]}** "
+        f"rigor, **{_retrain_freq}** cadence, shipping to **{hw.name}**:"
     )
     _ann_a, _ann_b, _ann_c = st.columns(3)
-    _ann_a.metric("Annual engineer time", f"{annual_hours:.0f} hrs")
-    _ann_b.metric("Annual compute cost", f"${annual_dollars:.0f}")
-    _ann_c.metric("Annual wall time on pod", f"{annual_wall:.0f} hrs")
+    _ann_a.metric("Annual engineer time",
+                  f"{_testing['total_engineer_hours']:.0f} hrs")
+    _ann_b.metric("Annual compute cost",
+                  f"${_testing['total_dollars']:,.0f}")
+    _ann_c.metric("Annual wall time on pod",
+                  f"{_testing['total_wall_hours']:.0f} hrs")
 
-    if _cost.regression_gate:
+    # Gate A / Gate B breakdown table
+    st.caption("Gate breakdown (which tests fire on each retrain):")
+    _gate_rows = [
+        {
+            "Gate": "**A** — \"did the new training do what we wanted?\"",
+            "Invocations/yr": _testing['gate_a']['invocations'],
+            "Engineer hrs/yr": f"{_testing['gate_a']['engineer_hours']:.0f}",
+            "Compute $/yr": f"${_testing['gate_a']['dollars']:,.0f}",
+            "Required on": "every path (FP-native + INT8)",
+        },
+        {
+            "Gate": "**B** — \"did quantization damage anything Gate A validated?\"",
+            "Invocations/yr": _testing['gate_b']['invocations'],
+            "Engineer hrs/yr": f"{_testing['gate_b']['engineer_hours']:.0f}",
+            "Compute $/yr": f"${_testing['gate_b']['dollars']:,.0f}",
+            "Required on": "INT8-only silicon only",
+        },
+    ]
+    st.dataframe(pd.DataFrame(_gate_rows), width="stretch", hide_index=True)
+
+    if _rigor.human_review:
         st.warning(
-            "⚠️ **Regression gate required** — this path requires human "
-            "review of prompt-level accuracy diffs before shipping. Factor "
-            "release-blocking risk into your planning: ~10-20% of iterations "
-            "need a re-tune pass (different calibration data, different "
-            "quant scheme parameters), which doubles the cycle cost."
+            f"⚠️ **Human red-team / domain-expert review required at "
+            f"{_rigor.display_name.split(' (')[0]} rigor.** The "
+            f"{_testing['total_engineer_hours']:.0f} engineer-hrs/year "
+            f"above includes ~{0.3 * _testing['total_engineer_hours']:.0f} "
+            f"hrs of senior-engineer / domain-specialist time that can't be "
+            f"automated away. Calendar time per release: 1-2 weeks."
+        )
+    elif _cost.regression_gate:
+        st.warning(
+            f"⚠️ **Regression gate required** — this path runs both Gate A "
+            f"and Gate B before shipping. Factor release-blocking risk: "
+            f"~10-20% of quant cycles need a re-tune pass (different calib "
+            f"data, different scheme parameters), which doubles Gate B cost "
+            f"when it fires."
         )
     else:
         st.success(
-            "🟢 **No regression gate** — deploy the training artifact "
-            "directly. Retargeting is free at the lifecycle level. "
-            "**The numbers above stay at 0 regardless of retrain cadence "
-            "— that's the point.** The cost column only grows on INT8-only "
-            "tiers where every retrain triggers a quantize+regression cycle."
+            f"🟢 **No Gate B on this tier — only Gate A fires.** Deploy the "
+            f"FP-native training artifact directly. The silicon-choice "
+            f"delta between this tier and an INT8-only tier at the same "
+            f"rigor is **${_alt_testing['total_dollars'] - _testing['total_dollars']:,.0f}/yr "
+            f"+ {_alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']:.0f} engineer-hrs/yr**."
         )
+
+    with st.expander(f"What \"{_rigor.display_name.split(' (')[0]}\" "
+                     f"rigor actually covers", expanded=False):
+        st.markdown(f"**Tier:** {_rigor.display_name}")
+        st.markdown(f"**Test count:** {_rigor.test_count}")
+        st.markdown(f"**Per-gate cost:** ~${_rigor.dollars_per_gate:.0f} + "
+                    f"{_rigor.engineer_hours_per_gate:.1f} engineer hrs + "
+                    f"{_rigor.wall_hours_per_gate:.1f} wall hrs")
+        st.markdown(f"**Human review:** "
+                    f"{'required' if _rigor.human_review else 'not required'}")
+        st.markdown(f"**Notes:** {_rigor.notes}")
 
 with st.expander("Why this cost exists — the hidden silicon trade-off",
                  expanded=False):
