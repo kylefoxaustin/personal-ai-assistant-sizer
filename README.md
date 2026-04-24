@@ -1,5 +1,7 @@
 # Skippy NPU sizer (personal-ai-assistant-sizer)
 
+[![Live app](https://img.shields.io/badge/Live_app-personal--ai--assistant--sizer.streamlit.app-10b981?style=flat-square&logo=streamlit)](https://personal-ai-assistant-sizer.streamlit.app/)
+
 Interactive sizing tool that projects Skippy's performance (the personal AI
 assistant in `personal-ai-framework`) across NPU tiers — from NPU Low-LP4
 through NPU High — using measured RTX 5090 baselines.
@@ -7,7 +9,10 @@ through NPU High — using measured RTX 5090 baselines.
 Companion repo to [keyhole-sizer](https://github.com/…/keyhole-sizer). Same
 pattern, different workload: LLM-first (no vision pipelines).
 
-**Private / internal use only.** Not for public distribution.
+**Live:** <https://personal-ai-assistant-sizer.streamlit.app/> — password-gated
+(password is in the Streamlit Cloud secrets; ask Kyle for access). The URL
+is public but the app itself is gated — intended audience is internal
+reviewers evaluating feasibility, not end users.
 
 ## What it does
 
