@@ -258,6 +258,88 @@ def kv_cache_bytes_per_token(model_key: str, dtype_bytes: int = 2) -> float:
 RUNTIME_OVERHEAD_BYTES = 1_000_000_000
 
 
+def _log_linear_interpolate(anchors: list[tuple[int, float]],
+                             ctx_tokens: int) -> tuple[float, str]:
+    """Linearly interpolate decode_tok_s on a log(context) axis.
+
+    anchors is a sorted list of (prompt_tokens, decode_tok_s) at the 5090
+    reference. Returns (decode_tok_s, source) where source is one of:
+      - "measured"       : ctx_tokens hits an anchor within ±5%
+      - "interpolated"   : ctx_tokens falls between two anchors
+      - "extrapolated_low" / "extrapolated_high": outside measured range
+                           (clamped to endpoint but flagged)
+    """
+    import math
+    if not anchors:
+        raise ValueError("no calibration anchors")
+
+    xs = [a[0] for a in anchors]
+    ys = [a[1] for a in anchors]
+    ctx = max(ctx_tokens, 1)
+
+    # Exact-ish match to any anchor (within 5%)
+    for x, y in zip(xs, ys):
+        if abs(ctx - x) / max(x, 1) <= 0.05:
+            return (y, "measured")
+
+    # Below measured range → clamp to minimum anchor, flag
+    if ctx < xs[0]:
+        return (ys[0], "extrapolated_low")
+    # Above measured range → clamp to maximum anchor, flag
+    if ctx > xs[-1]:
+        return (ys[-1], "extrapolated_high")
+
+    # Between two anchors → log-linear interpolate on context axis
+    log_ctx = math.log(ctx)
+    for i in range(len(xs) - 1):
+        if xs[i] <= ctx <= xs[i+1]:
+            log_a, log_b = math.log(xs[i]), math.log(xs[i+1])
+            t = (log_ctx - log_a) / (log_b - log_a) if log_b > log_a else 0.0
+            return (ys[i] + t * (ys[i+1] - ys[i]), "interpolated")
+
+    return (ys[-1], "extrapolated_high")
+
+
+def decode_tok_s_at_context(model_key: str, hw: Hardware,
+                             ctx_tokens: int,
+                             compiler_quality: float = 1.0) -> dict:
+    """Predict decode tok/s at arbitrary context length for (model, hw).
+
+    Strategy:
+      1. Build calibration anchors from 5090 measurements for this model
+         (every workload profile's measured prompt_tokens + decode_tok_s)
+      2. Log-linear interpolate to get 5090 tok/s at `ctx_tokens`
+      3. Scale by BW ratio for non-5090 tiers (decode is BW-bound)
+      4. Apply compiler_quality multiplier for projected tiers
+
+    Returns {"decode_tok_s", "source", "is_projected": bool}"""
+    # Lazy import to avoid circular dependency with measured.py
+    from .measured import calibration_anchors
+
+    anchors_full = calibration_anchors(model_key)
+    if not anchors_full:
+        raise ValueError(f"no calibration data for {model_key}")
+
+    # Drop workload_id for the interpolator
+    anchors = [(a[0], a[1]) for a in anchors_full]
+    tok_s_5090, interp_source = _log_linear_interpolate(anchors, ctx_tokens)
+
+    # BW-scale for non-5090 tiers. compiler_quality only bites on projected.
+    is_projected = (hw.name != RTX_5090_REFERENCE.name)
+    if is_projected:
+        bw_ratio = hw.effective_bandwidth_gbs / RTX_5090_REFERENCE.effective_bandwidth_gbs
+        tok_s = tok_s_5090 * bw_ratio * compiler_quality
+    else:
+        tok_s = tok_s_5090
+
+    return {
+        "decode_tok_s": tok_s,
+        "source": interp_source,
+        "is_projected": is_projected,
+        "ctx_tokens": ctx_tokens,
+    }
+
+
 def describe_hw(hw: Hardware) -> str:
     """One-liner summary of a Hardware spec — memory + TOPS + capacity + TDP.
 

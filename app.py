@@ -19,9 +19,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from sizer.measured import get_bundle_summary
+from sizer.measured import get_bundle_summary, calibration_anchors
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
+    decode_tok_s_at_context,
 )
 from sizer.precision import (
     MEASURED_PRECISION_QUALITY, MEASURED_PRECISION_SPEED,
@@ -796,6 +797,169 @@ fig.update_layout(
     xaxis=dict(showgrid=False),
 )
 st.plotly_chart(fig, width="stretch")
+
+
+# ───────────────────────── Decode-vs-context curve ─────────────────────────
+# Decode throughput is not a constant per model — it falls as context grows
+# because per-step attention traffic scales with sequence length. This chart
+# shows the interpolated curve across standard context lengths on the
+# selected tier, with the measured 5090 anchor points called out.
+
+st.subheader("Decode tok/s vs context length")
+st.caption(
+    f"How decode throughput scales with prompt/context length on **{hw.name}**. "
+    f"Solid line = interpolated between measured 5090 calibration points "
+    f"(dots); dashed region = extrapolated beyond measured range "
+    f"(calibration ceiling = 12.7K tokens today). For non-5090 tiers, the "
+    f"whole curve is BW-scaled by {hw.effective_bandwidth_gbs / 1523.2:.3f}× "
+    f"(hw effective BW / 5090 effective BW). "
+    f"Compiler quality {compiler_quality:.2f} applies to projected tiers."
+)
+
+# Standard log-spaced context lengths to evaluate
+_CTX_GRID = [100, 200, 400, 700, 1000, 2000, 4000, 7000, 10000, 13000,
+             16000, 24000, 32000]
+
+# Build curves for BOTH models on the selected tier (so users can compare
+# MoE vs dense context-scaling on their silicon of interest)
+_curve_fig = go.Figure()
+_model_colors = {
+    "qwen2.5-14b-q4-dense": "#60a5fa",   # blue
+    "qwen3-30b-a3b-q4-moe": "#34d399",   # green
+}
+
+_max_measured_ctx_any = 0  # for the extrapolation shading
+for mk in MODELS.keys():
+    try:
+        anchors = calibration_anchors(mk)
+    except Exception:
+        continue
+    if not anchors:
+        continue
+
+    max_measured = max(a[0] for a in anchors)
+    _max_measured_ctx_any = max(_max_measured_ctx_any, max_measured)
+
+    # Curve line (solid within measured range, dashed beyond)
+    xs_in, ys_in = [], []
+    xs_out, ys_out = [], []
+    for ctx in _CTX_GRID:
+        r = decode_tok_s_at_context(mk, hw, ctx,
+                                     compiler_quality=compiler_quality)
+        if ctx <= max_measured:
+            xs_in.append(ctx)
+            ys_in.append(r["decode_tok_s"])
+        else:
+            if not xs_out:  # start the dashed line at the last measured pt
+                xs_out.append(max_measured)
+                last_r = decode_tok_s_at_context(mk, hw, max_measured,
+                                                  compiler_quality=compiler_quality)
+                ys_out.append(last_r["decode_tok_s"])
+            xs_out.append(ctx)
+            ys_out.append(r["decode_tok_s"])
+
+    color = _model_colors.get(mk, "#f59e0b")
+    display = MODELS[mk]["display_name"]
+
+    # In-range (solid)
+    _curve_fig.add_trace(go.Scatter(
+        x=xs_in, y=ys_in, mode="lines", name=display,
+        line=dict(color=color, width=2.5),
+        hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s<extra></extra>",
+    ))
+    # Extrapolated (dashed)
+    if xs_out:
+        _curve_fig.add_trace(go.Scatter(
+            x=xs_out, y=ys_out, mode="lines",
+            name=f"{display} (extrapolated)",
+            line=dict(color=color, width=2.0, dash="dash"),
+            showlegend=False,
+            hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s (extrapolated)<extra></extra>",
+        ))
+
+    # Measured anchor dots — scaled to the selected tier
+    ax_xs = [a[0] for a in anchors]
+    ax_ys = []
+    ax_labels = []
+    for pt, ts_5090, wl in anchors:
+        r = decode_tok_s_at_context(mk, hw, pt,
+                                     compiler_quality=compiler_quality)
+        ax_ys.append(r["decode_tok_s"])
+        ax_labels.append(wl)
+    _curve_fig.add_trace(go.Scatter(
+        x=ax_xs, y=ax_ys, mode="markers",
+        name=f"{display} — measured anchors",
+        marker=dict(color=color, size=9,
+                    line=dict(color="#ffffff", width=1.5)),
+        hovertext=ax_labels, hoverinfo="text+x+y",
+        showlegend=False,
+    ))
+
+# Extrapolation zone shading
+if _max_measured_ctx_any > 0:
+    _curve_fig.add_vrect(
+        x0=_max_measured_ctx_any, x1=_CTX_GRID[-1],
+        fillcolor="#6b7280", opacity=0.10, line_width=0,
+        annotation_text="extrapolated — run bake-offs at longer contexts to fill",
+        annotation_position="top right",
+        annotation=dict(font=dict(size=11, color="#9ca3af")),
+    )
+
+_curve_fig.update_layout(
+    title=f"Decode throughput vs context length on {hw.name}",
+    xaxis=dict(title="Context length (tokens)", type="log",
+               gridcolor="#374151"),
+    yaxis=dict(title="Decode tok/s", gridcolor="#374151",
+               rangemode="tozero"),
+    height=420,
+    margin=dict(t=60, b=40, l=50, r=20),
+    plot_bgcolor="#1f2937",
+    paper_bgcolor="#111827",
+    font=dict(color="#f3f4f6"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                xanchor="right", x=1),
+)
+st.plotly_chart(_curve_fig, width="stretch")
+
+with st.expander("Methodology — how this curve is built", expanded=False):
+    st.markdown(f"""
+**5 calibration anchors per model on RTX 5090** (from Skippy's measured
+bake-offs at `eval/run_sizer_bakeoffs.py`):
+
+| Model | Anchor points (prompt tokens → decode tok/s) |
+|---|---|
+""")
+    for mk in MODELS.keys():
+        try:
+            anchors = calibration_anchors(mk)
+        except Exception:
+            continue
+        display = MODELS[mk]["display_name"]
+        pts = "  •  ".join(f"{pt:,} → {ts:.1f}" for pt, ts, _ in anchors)
+        st.markdown(f"| {display} | {pts} |")
+    st.markdown(f"""
+**Interpolation:** log-linear on the context axis between adjacent anchors.
+Context length matters more logarithmically than linearly — a 2x context
+increase from 4K→8K hurts decode more than 40K→80K, which is why the
+x-axis is log-scaled above.
+
+**Extrapolation:** clamped to the last anchor's tok/s value (so we don't
+overstate the collapse). Run bake-offs at 16K/24K/32K/64K prompt
+lengths to fill in the right side of the curve.
+
+**BW scaling to other tiers:** decode is bandwidth-bound — tok/s on a
+projected tier = (5090 interpolated tok/s) × (tier effective BW /
+5090 effective BW) × compiler_quality. For the currently selected tier
+({hw.name}), that multiplier is {hw.effective_bandwidth_gbs / 1523.2:.3f}×.
+
+**What this improves vs the prior single-point model:** project_llm's
+BW projection formerly grabbed whichever workload's tok/s was labeled
+for the user's choice. With the curve, we interpolate to the actual
+prompt_tokens the user specified. For mid-range contexts (1K-10K) this
+is materially more accurate than clamping to the nearest workload anchor.
+""")
+
+st.markdown("---")
 
 
 # Cross-tier comparison table
