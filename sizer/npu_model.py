@@ -258,6 +258,28 @@ def kv_cache_bytes_per_token(model_key: str, dtype_bytes: int = 2) -> float:
 RUNTIME_OVERHEAD_BYTES = 1_000_000_000
 
 
+def describe_hw(hw: Hardware) -> str:
+    """One-liner summary of a Hardware spec — memory + TOPS + capacity + TDP.
+
+    Mirrors keyhole-sizer's describe_hw(). Format adapts to silicon
+    capability: an INT8-only NPU (e.g. NXP Neutron class) won't report
+    BF16/FP8 TOPS; a Blackwell card reports all three.
+    """
+    tops_parts = []
+    if hw.peak_tops_bf16 > 0:
+        tops_parts.append(f"{hw.peak_tops_bf16:.0f} TOPS BF16")
+    if hw.peak_tops_int8 > 0:
+        tops_parts.append(f"{hw.peak_tops_int8:.0f} INT8")
+    if hw.peak_tops_fp8 > 0:
+        tops_parts.append(f"{hw.peak_tops_fp8:.0f} FP8")
+    tops_str = " / ".join(tops_parts) if tops_parts else "no tensor TOPS reported"
+    return (f"{hw.name}: {hw.mem_bus_width_bits}-bit {hw.mem_type} @ "
+            f"{hw.mem_data_rate_gtps} GT/s = {hw.mem_bandwidth_gbs:.1f} GB/s theo "
+            f"({hw.effective_bandwidth_gbs:.1f} GB/s effective)  •  "
+            f"{tops_str}  •  "
+            f"{hw.mem_capacity_gb:.0f} GB DRAM  •  {hw.tdp_watts:.0f} W")
+
+
 def memory_feasibility(model_key: str, hw: Hardware, context_tokens: int) -> dict:
     """Decide whether `(model, hw)` can even load at the given context length.
 

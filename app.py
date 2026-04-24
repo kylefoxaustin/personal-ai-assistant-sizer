@@ -20,7 +20,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from sizer.measured import get_bundle_summary
-from sizer.npu_model import MODELS, TIERS, project_llm, model_active_bytes_per_token
+from sizer.npu_model import (
+    MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
+)
 from sizer.precision import (
     MEASURED_PRECISION_QUALITY, MEASURED_PRECISION_SPEED,
     tier_precision_capability, capability_badge, capability_label,
@@ -98,10 +100,25 @@ with st.sidebar:
         options=tier_keys,
         index=tier_keys.index("NPU Mid"),
         key="k_tier",
-        help="RTX 5090 shows measured Skippy data. All NPU tiers project "
-             "from the 5090 baseline by effective-bandwidth ratio.",
+        help="Low-LP4 = 32-bit LPDDR4 @ 4.266 GT/s, dense INT8-only silicon "
+             "(NXP Neutron class, 8 GB DRAM, ~10 W). "
+             "Low-LP5-32bit = 32-bit LPDDR5 @ 6.4 GT/s, still INT8-only "
+             "but 1.5× BW. "
+             "Low-LP5-64bit = 64-bit LPDDR5 @ 6.4 GT/s, 51.2 GB/s theoretical, "
+             "INT8-only. "
+             "Low-LP5X = 64-bit LPDDR5X @ 8.4 GT/s, first tier with BF16/FP8 "
+             "tensor cores (~50 BF16 TOPS, 100 INT8/FP8 TOPS). "
+             "Mid = 128-bit LPDDR5X @ 8.4 GT/s (Keyhole/Skippy shipping "
+             "target, 24 GB DRAM, 25 W — primary design point). "
+             "High = 128-bit LPDDR5X @ 11.2 GT/s (vendor high-bin, 32 GB, 40 W). "
+             "RTX 5090 = 512-bit GDDR7 @ 28 GT/s (1792 GB/s) — reference "
+             "silicon for every BW projection here. Measured bake-offs "
+             "from Skippy live on this tier.",
     )
     hw = TIERS[tier_name]
+    # One-liner description below the selectbox — matches keyhole-sizer's
+    # describe_hw() caption pattern so users see silicon specs inline.
+    st.caption(describe_hw(hw))
 
     workload_keys = list(WORKLOAD_DEFAULTS.keys())
     workload_id = st.selectbox(
