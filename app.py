@@ -332,10 +332,10 @@ st.markdown("---")
 st.subheader("Retargeting cost per model revision")
 st.caption(
     f"Lifecycle cost of shipping Skippy's current Q4_K_M fp16-compute model to "
-    f"**{hw.name}** on each retrain. The silicon team's \"area savings from "
-    f"INT8-only\" is a one-time BOM win; this is the forever-cost at the "
-    f"org level — paid every time the model is retrained, per customer, "
-    f"per fine-tune."
+    f"**{hw.name}** on each retrain. The \"area savings from "
+    f"INT8-only\" argument is a one-time BOM win; this is the forever-cost "
+    f"at the org level — paid every time the model is retrained, per "
+    f"customer, per fine-tune."
 )
 
 # Figure out which retargeting path this tier needs for Skippy's current model
@@ -573,7 +573,7 @@ not grading):
   documents regression testing as a known cost center, doesn't
   quantify.
 
-**How to defend these numbers in a silicon review:**
+**How to defend these numbers in an architecture review:**
 
 1. Cite the vendor pricing pages for the API-fee floor (directly
    citable)
@@ -623,12 +623,12 @@ with st.expander("Why this cost exists — the hidden silicon trade-off",
   model customization, it's often **larger than the BOM savings from
   the cheaper INT8-only silicon**.
 
-**The missing row in most silicon-team trade matrices:**
+**The missing row in most precision trade-off matrices:**
 → Per-unit BOM cost is a ONE-TIME win (factored into gross margin)
 → Per-retrain retargeting cost is a RECURRING expense (factored into
    OPEX, engineer time, and release velocity)
 
-A rigorous silicon decision needs both rows.
+A rigorous architecture decision needs both rows.
 """)
 
 st.markdown("---")
