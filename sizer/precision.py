@@ -3,9 +3,11 @@
 Two axes:
   1. What compute precisions can a given tier execute in hardware?
      (Different from "what's peak TOPS > 0" — e.g. consumer Blackwell
-     still has DP4A CUDA-core INT8 but dropped tensor-core INT8, so
-     LLM W8A8 won't load via vLLM even though the silicon technically
-     has int8 math units.)
+     SM120 has tensor-core INT8 hardware accessible via sm80 IMMA
+     binary compat [confirmed by [backend]'s 2026-04-24 ncu probe],
+     but CUTLASS-compiled ecosystems like vLLM refuse SM120 because
+     SM120-native INT8 kernel templates don't exist yet. So LLM W8A8
+     won't load via vLLM even though the silicon has the matmul units.)
   2. What's the measured quality delta vs fp16 for each precision
      we've empirically tested on Skippy's workload?
 
@@ -81,17 +83,24 @@ MEASURED_PRECISION_QUALITY: dict[str, PrecisionMeasurement] = {
 MEASURED_PRECISION_SPEED: dict[str, dict] = {
     "fp16": {"tok_s": 50.6, "speedup_vs_fp16": 1.00, "silicon": "5090 (bf16 tensor cores)"},
     "fp8":  {"tok_s": 79.4, "speedup_vs_fp16": 1.57, "silicon": "5090 (FP8 tensor cores)"},
-    # INT8 on 5090 would fall back to DP4A (CUDA-core INT8) — not measured
-    # yet but known slower than FP8 based on keyhole's YOLO INT8 vs FP8 data
-    # (0.62ms vs 0.49ms = ~25% gap on small CNNs; scales worse on larger
-    # matmuls). On H100/A100 with tensor-core INT8 the speed would track FP8.
+    # INT8 LLM on 5090 is blocked via vLLM (no SM120 CUTLASS INT8 kernels),
+    # so there's no speed measurement to cite for this cell. On H100/A100
+    # with full CUTLASS INT8 kernel libraries, the LLM INT8 speed would
+    # track FP8 closely. The YOLO TRT INT8 number ([backend] ncu'd this)
+    # runs on tensor cores via sm80 binary compat — 1.29× slower than the
+    # FP16-fallback comparison, mostly due to quant/dequant overhead, not
+    # kernel-path difference.
 }
 
 
 # Precision capability per silicon class. A tier can "support" a precision
 # in two flavors:
 #   - "tensor_core": native tensor-core matmul (fast, preferred)
-#   - "cuda_core":   DP4A or equivalent (works, significantly slower)
+#   - "tensor_compat": tensor-core hardware accessed via binary compat
+#     (e.g. sm80 IMMA on SM120). Works for workloads with pre-compiled
+#     kernel libraries (TRT YOLO), blocked for workloads that compile
+#     fresh kernels per-arch (vLLM CUTLASS LLM serving)
+#   - "cuda_core":   DP4A or equivalent (works, significantly slower) —
 #   - "none":        can't execute this precision at all
 #
 # This is ORTHOGONAL to peak_tops_<dtype> which only asks "is there any
@@ -99,6 +108,7 @@ MEASURED_PRECISION_SPEED: dict[str, dict] = {
 # cuda_core is acceptable for small CNN inference, crippling for 14B+.
 _CAP_TENSOR = "tensor_core"
 _CAP_CUDA = "cuda_core"
+_CAP_COMPAT = "tensor_compat"   # tensor-core via binary compat (e.g. sm80 IMMA on SM120)
 _CAP_NONE = "none"
 
 
@@ -107,12 +117,21 @@ def tier_precision_capability(hw_name: str) -> dict[str, str]:
     # Hardcoded because this is silicon-family knowledge, not derivable
     # from the perf/BW numbers we store on Hardware. Extend as we add tiers.
     if hw_name.startswith("RTX 5090"):
-        # Consumer Blackwell SM120: dropped tensor-core INT8. FP8/FP4 gained.
-        # DP4A CUDA-core INT8 path retained as legacy.
+        # Consumer Blackwell SM120. Earlier framing said "tensor-core INT8
+        # dropped, DP4A CUDA-core fallback" — [backend]'s 2026-04-24 ncu
+        # probe falsified that. The real story: SM120 HARDWARE has INT8
+        # tensor-core capability (sm80 IMMA via binary compat — 13M tensor-
+        # pipe instructions measured on yolov8n-seg INT8 TRT engine), but
+        # SM120-native CUTLASS INT8 kernel templates don't exist yet. So:
+        #   - Pre-compiled TRT INT8 (YOLO): ✓ runs on tensor cores via sm80 compat
+        #   - Fresh CUTLASS INT8 (vLLM W8A8): ✗ blocks — no SM120 templates
+        # Marked as _CAP_COMPAT (tensor-core via binary compat) — amber, not
+        # green, because LLM-class workloads (the sizer's focus) are blocked
+        # today even though the hardware is capable.
         return {
             "bf16/fp16": _CAP_TENSOR,
             "fp8":       _CAP_TENSOR,
-            "int8":      _CAP_CUDA,     # DP4A only — vLLM W8A8 refuses to load
+            "int8":      _CAP_COMPAT,   # tensor-core via sm80 binary compat; vLLM/CUTLASS blocked
             "q4_km":     _CAP_TENSOR,   # weight-only, runs on bf16 tensor cores
         }
     if hw_name == "NPU Low-LP4":
@@ -131,7 +150,12 @@ def tier_precision_capability(hw_name: str) -> dict[str, str]:
 
 def capability_badge(level: str) -> str:
     """One-glyph summary of capability level for UI."""
-    return {_CAP_TENSOR: "✓", _CAP_CUDA: "⚠︎", _CAP_NONE: "✗"}.get(level, "?")
+    return {
+        _CAP_TENSOR: "✓",
+        _CAP_CUDA:   "⚠︎",
+        _CAP_COMPAT: "⚠︎",
+        _CAP_NONE:   "✗",
+    }.get(level, "?")
 
 
 def capability_label(level: str) -> str:
@@ -139,13 +163,19 @@ def capability_label(level: str) -> str:
     return {
         _CAP_TENSOR: "tensor-core",
         _CAP_CUDA:   "CUDA-core only",
+        _CAP_COMPAT: "tensor-core (compat path)",
         _CAP_NONE:   "not supported",
     }.get(level, "unknown")
 
 
 def capability_color(level: str) -> str:
     """CSS color for capability level (green/amber/red)."""
-    return {_CAP_TENSOR: "#10b981", _CAP_CUDA: "#f59e0b", _CAP_NONE: "#ef4444"}.get(level, "#6b7280")
+    return {
+        _CAP_TENSOR: "#10b981",
+        _CAP_CUDA:   "#f59e0b",
+        _CAP_COMPAT: "#f59e0b",
+        _CAP_NONE:   "#ef4444",
+    }.get(level, "#6b7280")
 
 
 def quality_badge_text(pm: PrecisionMeasurement) -> str:

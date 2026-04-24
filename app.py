@@ -372,8 +372,15 @@ with st.expander("How to read this / what was measured", expanded=False):
     st.markdown("""
 **Capability glyphs:**
 - ✓ **tensor-core** — native tensor-core matmul path (fast, preferred)
-- ⚠︎ **CUDA-core only** — legacy CUDA-core path (e.g. DP4A); works for
-  small CNNs but crippling for LLM-scale matmul
+- ⚠︎ **tensor-core (compat path)** — hardware has tensor-core INT8 but
+  only via binary-compatible pre-compiled kernels (e.g. sm80 IMMA on
+  SM120). Works for workloads with a pre-compiled kernel library
+  (TensorRT with YOLO engines); blocked for workloads that compile
+  fresh kernels per-arch (vLLM/CUTLASS LLM serving). LLM INT8 fails
+  on these tiers today.
+- ⚠︎ **CUDA-core only** — legacy CUDA-core path (e.g. DP4A). Retained
+  for historical labels; no tier currently uses this category after
+  [backend]'s 2026-04-24 ncu probe clarified the 5090 case.
 - ✗ **not supported** — no hardware path; would need CPU fallback or
   a different model quantization scheme
 
@@ -382,13 +389,16 @@ with st.expander("How to read this / what was measured", expanded=False):
 - 🟡 **2–5pp** — small but real drift; inspect per-category breakdown
 - 🔴 **>5pp** — meaningful capability regression; reconsider the precision
 
-**Why INT8 is CUDA-core-only on 5090 but tensor-core on every NPU tier:**
-consumer Blackwell (SM120) dropped dedicated tensor-core INT8 in favor of
-FP8/FP4 tensor cores. INT8 math still works on 5090 via the DP4A CUDA-core
-path (retained from Pascal) — vLLM's CUTLASS W8A8 loader refuses the 5090
-because it requires tensor-core INT8 templates. Edge NPUs (NXP Neutron,
-Kinara Ara, Hailo-8 class) have dedicated INT8 matmul engines and don't
-share this constraint.
+**Why INT8 shows tensor-core (compat) on 5090 but native tensor-core on
+every NPU tier:** consumer Blackwell (SM120) ships without a native
+INT8 kernel library. The HARDWARE still has INT8 tensor-core capability
+— ncu profiling of TRT YOLO INT8 engines on the 5090 shows non-zero
+tensor-pipe instruction counts with sm80 IMMA kernel names, so the
+Ampere binary-compat path engages real tensor cores. But ecosystems
+that compile fresh per-arch (vLLM's CUTLASS W8A8) refuse SM120 because
+the SM120-specific templates don't exist yet. Edge NPUs (NXP Neutron,
+Kinara Ara, Hailo-8 class) have dedicated INT8 matmul engines with
+vendor-provided kernel libraries and don't share this constraint.
 
 **INT8 measured -3.8pp caveat:** the 5 regressed samples are all on two
 refuse-to-answer prompts where both fp16 and INT8 correctly refused.
