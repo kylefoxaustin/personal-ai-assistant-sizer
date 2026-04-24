@@ -378,20 +378,10 @@ with st.expander("Annualized lifecycle cost — what-if retrain cadence",
     annual_dollars = _cost.dollars_per_cycle * cycles_per_year
     annual_wall = _cost.wall_minutes * cycles_per_year / 60.0  # hrs
 
-    st.markdown(
-        f"At **{_retrain_freq}** retrains ({cycles_per_year} cycles/yr), "
-        f"shipping to **{hw.name}** adds:"
-    )
-    _ann_a, _ann_b, _ann_c = st.columns(3)
-    _ann_a.metric("Annual engineer time", f"{annual_hours:.0f} hrs")
-    _ann_b.metric("Annual compute cost", f"${annual_dollars:.0f}")
-    _ann_c.metric("Annual wall time on pod", f"{annual_wall:.0f} hrs")
-
-    # Side-by-side "what if this were an INT8-only tier" comparison.
-    # For FP-native tiers, show what the cost WOULD BE on a PTQ path
-    # (INT8-only silicon) so the user sees the lifecycle difference
-    # without having to switch tiers. For PTQ/QAT tiers, show what FP-native
-    # WOULD save (the counterfactual the silicon team should be asked about).
+    # Counterfactual comparison FIRST — the cost shock lands before the
+    # relief. If the user picked an FP-native tier, show what PTQ (INT8-only
+    # silicon) would cost at this cadence. If they picked PTQ/QAT, show
+    # what FP-native would save.
     _alt_path_key = "ptq" if _path_key == "fp_native" else "fp_native"
     _alt_cost = RETARGETING_COSTS[_alt_path_key]
     _alt_hours = _alt_cost.engineer_hours * cycles_per_year
@@ -402,39 +392,36 @@ with st.expander("Annualized lifecycle cost — what-if retrain cadence",
     _delta_dollars = _alt_dollars - annual_dollars
 
     if _path_key == "fp_native":
-        _compare_label = (
-            f"**What you're avoiding** by picking an FP-native tier — "
-            f"if this were an INT8-only tier (LP4 / LP5-32bit / LP5-64bit) "
-            f"and you had to go through the PTQ + regression-gate cycle on "
-            f"every retrain at the same {_retrain_freq} cadence:"
+        st.markdown(
+            f"**If this were an INT8-only tier** (LP4 / LP5-32bit / LP5-64bit) "
+            f"and you had to run the PTQ + regression-gate cycle on every "
+            f"retrain at **{_retrain_freq}** cadence ({cycles_per_year} cycles/yr):"
         )
+        _cmp_a, _cmp_b, _cmp_c = st.columns(3)
+        _cmp_a.metric("Annual engineer time", f"{_alt_hours:.0f} hrs")
+        _cmp_b.metric("Annual compute cost", f"${_alt_dollars:.0f}")
+        _cmp_c.metric("Annual wall time on pod", f"{_alt_wall:.0f} hrs")
     else:
-        _compare_label = (
-            f"**Counterfactual savings** — if you picked an FP-native tier "
-            f"(LP5X / Mid / High / 5090) instead of this one, at the same "
-            f"{_retrain_freq} cadence you'd avoid:"
+        st.markdown(
+            f"**If you picked an FP-native tier instead** "
+            f"(LP5X / Mid / High / 5090) at the same **{_retrain_freq}** "
+            f"cadence ({cycles_per_year} cycles/yr), you'd save:"
         )
+        _cmp_a, _cmp_b, _cmp_c = st.columns(3)
+        _cmp_a.metric("Engineer hrs saved", f"{_delta_hours:.0f} hrs")
+        _cmp_b.metric("Compute cost saved", f"${_delta_dollars:.0f}")
+        _cmp_c.metric("Pod wall time saved",
+                      f"{(annual_wall - _alt_wall):.0f} hrs")
 
     st.markdown("---")
-    st.markdown(_compare_label)
-    _cmp_a, _cmp_b, _cmp_c = st.columns(3)
-    _cmp_a.metric("Engineer hrs (on INT8-only)" if _path_key == "fp_native"
-                  else "Engineer hrs saved",
-                  f"{_alt_hours:.0f} hrs" if _path_key == "fp_native"
-                  else f"{_delta_hours:.0f} hrs",
-                  delta=f"+{_delta_hours:.0f} vs FP-native" if _path_key == "fp_native" else None,
-                  delta_color="inverse")
-    _cmp_b.metric("Compute cost (on INT8-only)" if _path_key == "fp_native"
-                  else "Compute cost saved",
-                  f"${_alt_dollars:.0f}" if _path_key == "fp_native"
-                  else f"${_delta_dollars:.0f}",
-                  delta=f"+${_delta_dollars:.0f} vs FP-native" if _path_key == "fp_native" else None,
-                  delta_color="inverse")
-    _cmp_c.metric("Wall time on pod" if _path_key == "fp_native"
-                  else "Wall time saved",
-                  f"{_alt_wall:.0f} hrs",
-                  delta=f"+{_alt_wall:.0f} vs FP-native" if _path_key == "fp_native" else None,
-                  delta_color="inverse")
+    st.markdown(
+        f"**Your actual cost** at **{_retrain_freq}** retrains, shipping to "
+        f"**{hw.name}**:"
+    )
+    _ann_a, _ann_b, _ann_c = st.columns(3)
+    _ann_a.metric("Annual engineer time", f"{annual_hours:.0f} hrs")
+    _ann_b.metric("Annual compute cost", f"${annual_dollars:.0f}")
+    _ann_c.metric("Annual wall time on pod", f"{annual_wall:.0f} hrs")
 
     if _cost.regression_gate:
         st.warning(
