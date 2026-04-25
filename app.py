@@ -1197,13 +1197,25 @@ for tname, thw in TIERS.items():
             "Tier": tname,
             "Source": ("🟢 measured" if rr["source"] == "measured"
                        else "🟡 projected") + tight_note,
-            "Decode tok/s": rr["decode_tok_s"],
-            "Prefill tok/s": round(rr["prefill_tok_s"]),
-            "Total (s)": rr["total_s"],
-            "Host (ms)": rr["host_ms"],
+            # Stringify all numeric values: the wont_fit / dtype_mismatch
+            # branches above use "—" sentinels which collide with floats
+            # under pandas object-dtype + pyarrow serialization (Streamlit
+            # 1.56's st.dataframe → pa.Table.from_pandas raises
+            # ArrowTypeError 'Expected bytes, got a float object').
+            "Decode tok/s":  f"{rr['decode_tok_s']:.1f}",
+            "Prefill tok/s": f"{round(rr['prefill_tok_s'])}",
+            "Total (s)":     f"{rr['total_s']:.2f}",
+            "Host (ms)":     (f"{rr['host_ms']:.0f}" if isinstance(rr['host_ms'], (int, float))
+                              else str(rr['host_ms'])),
         })
     except ValueError:
-        rows.append({"Tier": tname, "Source": "⚪ no data"})
+        # Pad missing columns with "—" so pandas doesn't fill them with
+        # NaN (float) — same mixed-type-collision risk.
+        rows.append({
+            "Tier": tname, "Source": "⚪ no data",
+            "Decode tok/s": "—", "Prefill tok/s": "—",
+            "Total (s)": "—", "Host (ms)": "—",
+        })
 df = pd.DataFrame(rows)
 st.dataframe(df, width="stretch", hide_index=True)
 
@@ -1248,13 +1260,28 @@ for mk in MODELS:
             "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
             "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
             "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            "Decode tok/s": rr["decode_tok_s"],
-            "Total (s)": rr["total_s"],
+            # Stringify numerics (same rationale as the cross-tier table
+            # above — pyarrow can't serialize a column that mixes "—"
+            # sentinels with floats under pandas object dtype).
+            "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
+            "Total (s)":    f"{rr['total_s']:.2f}",
             "Source": ("🟢 measured" if rr["source"] == "measured"
                        else "🟡 projected") + (" ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""),
         })
     except ValueError:
-        rows2.append({"Model": MODELS[mk]["display_name"], "Source": "⚪ no data"})
+        # Same column-padding pattern — avoid NaN-vs-string mixing.
+        # Active params + Bytes/token decode are uniformly floats in
+        # the other branches (model metadata, not result-dependent),
+        # so keep them as floats here too.
+        rows2.append({
+            "Model": MODELS[mk]["display_name"],
+            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+            "Decode tok/s": "—",
+            "Total (s)": "—",
+            "Source": "⚪ no data",
+        })
 df2 = pd.DataFrame(rows2)
 st.dataframe(df2, width="stretch", hide_index=True)
 
