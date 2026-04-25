@@ -24,6 +24,7 @@ from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
     decode_tok_s_at_context, project_what_if_decode_tok_s,
     what_if_memory_feasibility,
+    PRODUCTION_REFERENCE_KEY, CATEGORY_LABELS,
 )
 from sizer.precision import (
     MEASURED_PRECISION_QUALITY, MEASURED_PRECISION_SPEED,
@@ -95,6 +96,88 @@ with st.sidebar:
         help="MoE decode tok/s scales with active params (~3B) not total "
              "params (~30B). Dense 14B moves ~5× more bytes per decoded token.",
     )
+
+    # ── Per-model accuracy caption + expander ──
+    # Shows pass rate on Skippy v2+RAG eval (132 prompts) plus Δpp vs
+    # the production reference (Skippy MoE fine-tune). The accuracy
+    # data lives on each MODELS entry; production reference's
+    # category_deltas is empty (would be 0 vs itself).
+    _selected_model = MODELS[model_key]
+    _production_model = MODELS[PRODUCTION_REFERENCE_KEY]
+    _is_production = (model_key == PRODUCTION_REFERENCE_KEY)
+    if "pass_rate" in _selected_model:
+        _delta_pp = (_selected_model["pass_rate"] - _production_model["pass_rate"]) * 100.0
+        _delta_sign = "+" if _delta_pp >= 0 else ""
+        if _is_production:
+            st.caption(
+                f"**{_selected_model['pass_rate']*100:.1f}%** pass rate "
+                f"({_selected_model['pass_n_passes']}/{_selected_model['pass_n_total']}, "
+                f"v2+RAG) · production reference"
+            )
+        else:
+            _ref_short = _production_model["display_name"].split(" Skippy")[0]
+            st.caption(
+                f"**{_selected_model['pass_rate']*100:.1f}%** pass rate "
+                f"({_selected_model['pass_n_passes']}/{_selected_model['pass_n_total']}, "
+                f"v2+RAG) · {_delta_sign}{_delta_pp:.1f}pp vs production "
+                f"({_ref_short})"
+            )
+
+        with st.expander("📊 Accuracy details"):
+            st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
+            st.markdown("---")
+            st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
+            _catalog_rows: list[dict] = []
+            for _k, _m in MODELS.items():
+                if "pass_rate" not in _m:
+                    continue
+                _row_delta = (_m["pass_rate"] - _production_model["pass_rate"]) * 100.0
+                _row_delta_str = (
+                    "—  (reference)" if _k == PRODUCTION_REFERENCE_KEY
+                    else f"{('+' if _row_delta >= 0 else '')}{_row_delta:.1f}pp"
+                )
+                _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
+                _catalog_rows.append({
+                    "Model":            _row_label,
+                    "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
+                    "Δ vs production":  _row_delta_str,
+                    "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
+                    "Training":         _m.get("training", "—"),
+                })
+            st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
+
+            if _selected_model.get("category_deltas"):
+                _ref_short = _production_model["display_name"].split(" (")[0]
+                st.markdown(
+                    f"**Per-category Δ vs production** ({_ref_short}, "
+                    f"positive = this model wins):"
+                )
+                for cat, dp in _selected_model["category_deltas"].items():
+                    cat_label = CATEGORY_LABELS.get(cat, cat)
+                    sign = "+" if dp >= 0 else ""
+                    st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
+                st.caption(
+                    "Δ measured vs Skippy v2 prompt set (132 samples), "
+                    "RAG on (8 chunks via hybrid retrieval). Categories "
+                    "not listed are flat ±0 between this model and production."
+                )
+            elif _is_production:
+                st.caption(
+                    "Production reference — per-category Δ is zero against "
+                    "itself. Switch the selector above to see breakdowns "
+                    "for the alternative entries."
+                )
+
+            st.markdown(
+                "---\n"
+                "**Why this matters for sizing:** model choice on the same "
+                "Q4_K_M MoE 30B/3B-active architecture is a pure quality-vs-quality "
+                "trade — decode tok/s is identical across same-arch entries (BW-bound "
+                "physics doesn't care which weights are in the file). The "
+                "**dense entry** has a different architecture (Qwen 2.5 14B), "
+                "so its perf differs: 5× more bytes per decoded token → "
+                "~5× lower tok/s at the same tier. Cost trade, not capability."
+            )
 
     tier_keys = list(TIERS.keys())
     tier_name = st.selectbox(

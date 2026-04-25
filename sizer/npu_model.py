@@ -180,7 +180,7 @@ HW_SLUGS = {t.name: t.name.lower().replace(" ", "_").replace("(", "").replace(")
 # to keyhole-sizer's measurement anchor).
 MODELS: dict[str, dict] = {
     "qwen2.5-14b-q4-dense": {
-        "display_name": "Qwen 2.5 14B (dense, Q4_K_M)",
+        "display_name": "Qwen 2.5 14B Skippy fine-tune (dense, Q4_K_M)",
         "family": "qwen2.5",
         "is_moe": False,
         "total_params": 14_700_000_000,
@@ -200,6 +200,26 @@ MODELS: dict[str, dict] = {
         # re-quantization or falling back to CPU fp16 (crushingly slow).
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
+        # Accuracy on Skippy v2+RAG eval (44 prompts × 3 samples = 132).
+        # Measured 2026-04-24 by [backend] session, eval/results/
+        # acc_diff_dense_q4km_vs_moe_q4km_v2_rag.md.
+        "training": "skippy_finetune",
+        "pass_rate": 0.682,
+        "pass_n_passes": 90,
+        "pass_n_total": 132,
+        # Δ vs production reference (Skippy MoE FT). MoE wins
+        # rag_datasheet by +3 → dense -3 here; MoE loses refusal -2 →
+        # dense +2 here. Sign: positive = THIS model wins vs production.
+        "category_deltas": {
+            "rag_datasheet": -3,
+            "refusal":       +2,
+        },
+        "accuracy_bullet": (
+            "Dense and MoE fine-tunes hit near-parity on quality "
+            "(Δ -0.7pp vs production MoE). MoE wins on per-token cost "
+            "(3B active << 14B dense), NOT accuracy. Choosing MoE is "
+            "a cost decision, not a capability one."
+        ),
     },
     "qwen3-30b-a3b-q4-moe": {
         "display_name": "Qwen3-30B-A3B Skippy fine-tune (MoE, Q4_K_M)",
@@ -219,6 +239,20 @@ MODELS: dict[str, dict] = {
         "ctx_len_trained": 262144,
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
+        # Production reference for the v2+RAG accuracy axis. Other
+        # models compute Δ vs this row. category_deltas is empty
+        # because the production model can't differ from itself.
+        "training": "skippy_finetune",
+        "pass_rate": 0.689,
+        "pass_n_passes": 91,
+        "pass_n_total": 132,
+        "category_deltas": {},
+        "accuracy_bullet": (
+            "Production reference (current shipping model). Domain "
+            "fine-tuning lands the retrieval vocabulary the deck story "
+            "is about — the +5.3pp delta vs stock public reasoning models "
+            "isn't capability, it's domain knowledge."
+        ),
     },
     # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
     # variant of the same base architecture as Skippy's fine-tuned MoE.
@@ -254,7 +288,49 @@ MODELS: dict[str, dict] = {
         # measurement bundle entries instead of duplicating the data.
         # Resolved by Hardware.get_measured() and calibration_anchors().
         "measurement_alias": "qwen3-30b-a3b-q4-moe",
+        # Stock public reasoning baseline. Same v2+RAG eval, same RTX
+        # 5090 host, same Q4_K_M GGUF — only difference is the training
+        # (Alibaba's reasoning-tune vs Kyle's domain LoRA). Δ -5.3pp
+        # overall, with the regression concentrated in domain retrieval.
+        "training": "public_stock",
+        "pass_rate": 0.636,
+        "pass_n_passes": 84,
+        "pass_n_total": 132,
+        "category_deltas": {
+            "rag_datasheet": -8,    # 26 prompts; the domain vocabulary gap
+            "rag_email":     -3,    # 1 prompt × 3 samples; stock failed all three
+            "numerical_precision": +3,  # general reasoning Thinking trains harder for
+            "refusal":       +2,    # scope-limiting tuned harder in Thinking
+        },
+        "accuracy_bullet": (
+            "Public reasoning models are stronger in general, but lose to "
+            "the domain fine-tune on retrieval-grounded queries — domain "
+            "knowledge doesn't fall out of larger general capability. "
+            "Wins numerical_precision + refusal; loses rag_datasheet."
+        ),
     },
+}
+
+# Reference model for per-category-Δ rendering. UI labels comparisons
+# as "vs Skippy MoE fine-tune (production)" and the production model
+# itself shows no per-category breakdown (it would be 0 across the
+# board). Mirror of keyhole-sizer's PRODUCTION_REFERENCE_KEY pattern.
+PRODUCTION_REFERENCE_KEY = "qwen3-30b-a3b-q4-moe"
+
+# Human-readable labels for category-Δ display. Keyed by Skippy v2
+# prompt category. Categories not listed in a model's category_deltas
+# are flat ±0 vs production.
+CATEGORY_LABELS: dict[str, str] = {
+    "rag_datasheet":       "RAG · datasheet retrieval",
+    "rag_email":           "RAG · email retrieval",
+    "numerical_precision": "Numerical reasoning",
+    "refusal":             "Refusal / scope control",
+    "coding":              "Coding",
+    "reasoning":           "General reasoning",
+    "multihop":            "Multi-hop",
+    "general":             "General Q&A",
+    "persona":             "Persona / style",
+    "rag_blog":            "RAG · blog retrieval",
 }
 
 
