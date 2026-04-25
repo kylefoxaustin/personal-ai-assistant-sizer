@@ -81,17 +81,36 @@ def calibration_anchors(model_key: str) -> list[tuple[int, float, str]]:
 
     Used by the context-length scaling curve to interpolate decode
     throughput at arbitrary context lengths rather than only the
-    5 fixed workload shapes."""
+    5 fixed workload shapes.
+
+    If the model entry declares a `measurement_alias` (e.g. Thinking-2507
+    stock shares Qwen3-30B-A3B architecture with Skippy's MoE fine-tune),
+    falls back to the alias's anchors when the model itself has no direct
+    bundle data."""
     bundle = load_bundle()
-    anchors: list[tuple[int, float, str]] = []
-    for workload_id, per_model in bundle.get("workloads", {}).items():
-        cell = per_model.get(model_key)
-        if not cell:
-            continue
-        pt = cell.get("prompt_tokens_p50")
-        ts = cell.get("decode_tok_per_s_p50")
-        if pt is None or ts is None:
-            continue
-        anchors.append((int(pt), float(ts), workload_id))
-    anchors.sort(key=lambda x: x[0])
+
+    def _anchors_for(key: str) -> list[tuple[int, float, str]]:
+        out: list[tuple[int, float, str]] = []
+        for workload_id, per_model in bundle.get("workloads", {}).items():
+            cell = per_model.get(key)
+            if not cell:
+                continue
+            pt = cell.get("prompt_tokens_p50")
+            ts = cell.get("decode_tok_per_s_p50")
+            if pt is None or ts is None:
+                continue
+            out.append((int(pt), float(ts), workload_id))
+        out.sort(key=lambda x: x[0])
+        return out
+
+    anchors = _anchors_for(model_key)
+    if anchors:
+        return anchors
+
+    # Fall back to architecture sibling if the entry declares one.
+    # Lazy import to avoid circular dependency (npu_model imports measured).
+    from .npu_model import MODELS
+    alias = MODELS.get(model_key, {}).get("measurement_alias")
+    if alias and alias != model_key:
+        return _anchors_for(alias)
     return anchors

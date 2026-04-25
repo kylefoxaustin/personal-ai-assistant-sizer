@@ -60,7 +60,16 @@ class Hardware:
     def get_measured(self, model_key: str, workload_id: str) -> dict | None:
         if not self.measured_llm:
             return None
-        return self.measured_llm.get(model_key, {}).get(workload_id)
+        cell = self.measured_llm.get(model_key, {}).get(workload_id)
+        if cell is not None:
+            return cell
+        # Fall back to architecture sibling's measurement if the model
+        # entry declares a `measurement_alias` (e.g. Thinking-2507 stock
+        # shares Qwen3-30B-A3B architecture with Skippy's fine-tuned MoE).
+        alias = MODELS.get(model_key, {}).get("measurement_alias")
+        if alias and alias != model_key:
+            return self.measured_llm.get(alias, {}).get(workload_id)
+        return None
 
 
 # Reference: RTX 5090 — all Skippy bake-offs ran here.
@@ -193,7 +202,7 @@ MODELS: dict[str, dict] = {
         "quant_scheme": "Q4_K_M",
     },
     "qwen3-30b-a3b-q4-moe": {
-        "display_name": "Qwen3 30B A3B (MoE, Q4_K_M)",
+        "display_name": "Qwen3-30B-A3B Skippy fine-tune (MoE, Q4_K_M)",
         "family": "qwen3",
         "is_moe": True,
         "total_params": 30_500_000_000,
@@ -210,6 +219,41 @@ MODELS: dict[str, dict] = {
         "ctx_len_trained": 262144,
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
+    },
+    # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
+    # variant of the same base architecture as Skippy's fine-tuned MoE.
+    # Architecture is identical (same total/active params, same expert
+    # routing) so cross-tier perf projections match the Skippy MoE row to
+    # 1-for-1. Surfaced as a separate entry to support the deck story
+    # "would a stock public reasoning model just replace the domain
+    # fine-tune?" — answer: not on Kyle's domain (-5.3pp on rag_datasheet
+    # per [backend]'s 2026-04-24 v2+RAG eval). Quality differentiation
+    # lives in the deck narrative for now; PAI sizer's MEASURED_PRECISION_*
+    # tables don't track per-checkpoint accuracy yet.
+    "qwen3-30b-a3b-thinking-q4-moe": {
+        "display_name": "Qwen3-30B-A3B-Thinking-2507 stock (MoE, Q4_K_M)",
+        "family": "qwen3",
+        "is_moe": True,
+        "total_params": 30_500_000_000,
+        "active_params": 3_300_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_556_684_448,
+        "hidden_dim": 2048,
+        "num_layers": 48,
+        "num_attention_heads": 32,
+        "num_kv_heads": 4,
+        "num_experts": 128,
+        "experts_per_token": 8,
+        "vocab_size": 151936,
+        "ctx_len_trained": 262144,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        # Architecture is identical to qwen3-30b-a3b-q4-moe (Skippy fine-
+        # tune) — same total/active params, same expert routing — so
+        # decode/prefill perf projections are 1-for-1. Borrow that model's
+        # measurement bundle entries instead of duplicating the data.
+        # Resolved by Hardware.get_measured() and calibration_anchors().
+        "measurement_alias": "qwen3-30b-a3b-q4-moe",
     },
 }
 
