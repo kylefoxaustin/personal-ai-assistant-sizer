@@ -48,12 +48,32 @@ class Hardware:
     # LPDDR6-12, LPDDR6-14 — within-class BW scaling on whatever stock
     # family the upgrade was applied to), Class 5 GDDR7-28.
     tier_family: str | None = None
-    # Per-tier compute utilization factor for the cross-class compute
-    # floor: ops_per_token / (effective_tops × util_factor) ms. Anchored
-    # to the i.MX 95 yolov8n-INT8 measurement (12 GOPs / 2 INT8 TOPS / 32
-    # ms = 0.19 utilization). Per [backend] 2026-04-29 12:38 calibration
-    # table: Neutron 0.19, Mid 0.45, High 0.50, 5090 0.85.
+    # Per-tier compute utilization factor for VISION cross-class compute
+    # floor: gops_per_forward / (effective_tops × util_factor) ms.
+    # Anchored to i.MX 95 yolov8n-INT8 (12 GOPs / 2 INT8 TOPS / 32 ms =
+    # 0.19). Per [backend] 2026-04-29 12:38: Neutron 0.19, Mid 0.45,
+    # High 0.50, 5090 0.85. Vision-only — LLM uses separate fields below
+    # because LLM prefill realizes much lower silicon utilization due to
+    # small per-layer matmuls + MoE expert routing + KV cache pressure.
     compute_util_factor: float = 0.45
+    # LLM prefill compute utilization factor — much lower than vision on
+    # the same silicon. Per [backend] 2026-04-29 13:17 calibration: Mid
+    # LLM prefill anchors at 0.10 (vs 0.45 vision); canonically 5–15% in
+    # the literature for LLM-on-edge-NPU. Used in cross-class TTFT
+    # compute-floor: gops_per_token × prompt_tokens / (effective_tops ×
+    # llm_prefill_util_factor) ms. Default 0.10 — refines per anchor.
+    llm_prefill_util_factor: float = 0.10
+    # LLM decode bandwidth realization factor: fraction of effective_BW
+    # actually realized for LLM decode kernels. Default 1.0 (pure
+    # BW-bound, ceiling = active_params_GB / effective_BW). Mid + Skippy
+    # MoE Q4 measured at 0.66 × ceiling per [backend] 2026-04-29 13:17.
+    # May be model-class-specific (MoE vs dense) but we only have a
+    # MoE-class measurement today; default 1.0 for unmeasured tier-class
+    # × model-class cells. Used in cross_class decode floor:
+    # decode_floor_ms_per_tok = active_params_GB
+    #                            / (hw.effective_bandwidth_gbs ×
+    #                               llm_decode_bw_realization)
+    llm_decode_bw_realization: float = 1.0
     # Per-tier overhead added to compute-floor (kernel launch, sync,
     # warmup amortization). Default 1 ms NPU / 0.3 ms GPU. Default
     # absorbed into compute-floor calibration; populate per tier when
@@ -224,6 +244,20 @@ NPU_MID = Hardware(
     # an anchor measured on Mid projects to High as 🟡 same-class.
     tier_family="LP5X-8.4-128b",
     compute_util_factor=0.45,
+    # LLM prefill calibrated to Mid + Skippy MoE Q4 anchor: 0.10 × peak
+    # ≈ 351 ms TTFT @ 1K matches measured. This applies in the cross-
+    # class fallback for cells without an anchor — gives the right TTFT
+    # for unmeasured-model-on-Mid cases.
+    llm_prefill_util_factor=0.10,
+    # llm_decode_bw_realization stays at default 1.0 — the Mid + MoE
+    # measurement (decode 0.66 × BW-floor ceiling) is already captured
+    # in the anchor's 37.85 tok/s value, accessed via same-class
+    # projection. We don't carry the 0.66 here because [backend] 13:17
+    # flagged that decode realization is model-class-specific (dense
+    # may not realize at 0.66 like MoE on the same silicon), and using
+    # 0.66 in cross-class cells would silently over-pessimize dense-14B
+    # tok/s without a measurement to back it up. Default 1.0 = ceiling;
+    # 🔴 cross-class badge tells the user the number is low-confidence.
     compute_overhead_ms=1.0,
     # Measured-decode anchor: NPU Mid silicon bake-off on Skippy
     # Qwen3-30B-A3B Q4_K_M MoE → 37.85 tok/s (vs 5090-projection
@@ -264,6 +298,10 @@ NPU_HIGH = Hardware(
     # 12:38 calibration table).
     tier_family="LP5X-8.4-128b",
     compute_util_factor=0.50,
+    # LLM prefill: Mid's 0.10 × 1.11 (compute-efficiency bump) ≈ 0.11.
+    # Same caveat as Mid for decode realization — staying at default 1.0
+    # since cross-class cells are 🔴 low-confidence regardless.
+    llm_prefill_util_factor=0.11,
     compute_overhead_ms=1.0,
 )
 
@@ -764,15 +802,20 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
         }
 
     # 3) Cross-class fallback: two-floor MAX(BW, compute) per token.
+    # Uses LLM-specific calibration (llm_prefill_util_factor for compute
+    # floor; llm_decode_bw_realization on BW floor) per [backend] 13:17
+    # — vision util factors don't transfer to LLM kernels.
     model_meta = MODELS[model_key]
     active_params_gb = (model_meta["active_params"]
                          * model_meta["bytes_per_param"]) / 1e9
     gops_per_token = (2 * model_meta["active_params"]) / 1e9
     required_dtype = model_meta.get("compute_dtype", "fp16")
     eff_tops = hw.effective_tops(required_dtype)
-    bw_floor_ms = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
+    decode_bw_realized = (hw.effective_bandwidth_gbs
+                           * hw.llm_decode_bw_realization)
+    bw_floor_ms = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
     compute_floor_ms = gops_per_token / max(
-        eff_tops * hw.compute_util_factor, 1e-9
+        eff_tops * hw.llm_prefill_util_factor, 1e-9
     )
     per_token_ms = max(bw_floor_ms, compute_floor_ms)
     tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
@@ -1010,24 +1053,37 @@ def project_llm(
         else:
             # 4) Cross-class fallback: two-floor MAX(BW, compute).
             # No same-family anchor, so we derive from first principles.
-            # This replaces the previous 5090-BW-projection — that approach
-            # carried a fixed implicit-realization factor from the 5090
-            # cell which doesn't transfer cleanly across tier-classes (per
-            # [sizer] 13:01 + [backend] 13:07 "replace, not upward-clamp").
-            bw_floor_ms_decode = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
+            # Replaces the previous 5090-BW-projection (carried 5090's
+            # implicit realization factor which doesn't transfer across
+            # tier-classes — per [sizer] 13:01 + [backend] 13:07
+            # "replace, not upward-clamp").
+            #
+            # LLM calibration uses LLM-specific util factors per
+            # [backend] 13:17: prefill_util ~0.10 (vs vision's 0.45 —
+            # LLM kernels realize lower silicon utilization due to small
+            # per-layer matmuls + MoE expert routing + KV cache writes;
+            # canonically 5–15% in the literature) and decode_bw_realization
+            # for the BW floor. Both default to safe values (0.10 / 1.0)
+            # for unmeasured tier-class × model-class cells; populated to
+            # measured calibration on Mid/High via [backend] 13:17 spec.
+            decode_bw_realized = (hw.effective_bandwidth_gbs
+                                   * hw.llm_decode_bw_realization)
+            bw_floor_ms_decode = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
             compute_floor_ms_decode = gops_per_token / max(
-                eff_tops * hw.compute_util_factor, 1e-9
+                eff_tops * hw.llm_prefill_util_factor, 1e-9
             )
             per_token_ms = max(bw_floor_ms_decode, compute_floor_ms_decode)
             decode_tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
             regime = ("bw_bound"
                        if bw_floor_ms_decode >= compute_floor_ms_decode
                        else "compute_bound")
-            # Prefill: per-batch BW (weights read once) + per-token compute
+            # Prefill: per-batch BW (weights read once, no realization
+            # factor — prefill BW is well-utilized; the bottleneck is
+            # compute) + per-token compute with LLM prefill util_factor.
             bw_floor_ms_prefill = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
             compute_floor_ms_prefill = (
                 gops_per_token * prompt_tokens
-                / max(eff_tops * hw.compute_util_factor, 1e-9)
+                / max(eff_tops * hw.llm_prefill_util_factor, 1e-9)
             )
             ttft_ms = max(bw_floor_ms_prefill, compute_floor_ms_prefill) + hw.compute_overhead_ms
             prefill_tok_s = prompt_tokens / max(ttft_ms / 1000.0, 1e-6) * compiler_quality
