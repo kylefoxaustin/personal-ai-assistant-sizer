@@ -304,7 +304,15 @@ NPU_MID = Hardware(
 
 NPU_HIGH = Hardware(
     name="NPU High",
-    peak_tops_bf16=275.0, peak_tops_int8=550.0, peak_tops_fp8=550.0,
+    # Per [docs] 2026-04-29 16:08 spec lock — Option (iii): High is the
+    # FP-capable inflection-point silicon. The chip we used to call Mid
+    # (multi-precision) is the chip we now call High; the INT8-only chip
+    # we measured is what's now called Mid.
+    # Architectural rationale: 200 TOPS BF16/FP16 with the standard
+    # 2× INT8 doubling on the same MAC datapath (a 200-TOPS-FP chip is
+    # implicitly a 400-TOPS-INT8 chip on the silicon you actually buy).
+    # capability_levels stay all-tensor-native (FP supported, unlike Mid).
+    peak_tops_bf16=200.0, peak_tops_int8=400.0, peak_tops_fp8=400.0,
     # Same memory class as NPU Mid (128-bit LPDDR5X @ 8.4 GT/s = 134.4
     # GB/s). NPU High differentiates from Mid on COMPUTE and CAPACITY
     # rather than memory BW: 1.375× TOPS, 1.33× DRAM, higher compute
@@ -1094,14 +1102,23 @@ def project_llm(
             # typical for the bake-off conditions). Scale by effective_npu_share.
             decode_tok_s = (decode_anchor * bw_ratio_within_family
                               * effective_npu_share * compiler_quality)
-            # Prefill: held at anchor's stock value (compute-bound, not
-            # BW-bound, so memory swap doesn't move it). If anchor doesn't
-            # carry a prefill rate, project from 5090 (5090 cell will give
-            # the per-workload TTFT shape, then we replace the rate).
+            # Prefill: held at anchor's stock value when same compute, but
+            # SCALED by compute ratio when target tier has different peak
+            # TOPS than anchor (within the same memory family). Prefill
+            # is compute-bound, so a within-family tier with 2× compute
+            # (e.g. High @ 400 INT8 TOPS vs Mid anchor @ 200 INT8 TOPS)
+            # produces 2× faster prefill, halving TTFT. Per [docs] 16:08
+            # validation: High + MoE Q4 prefill @ 1K → 175.5 ms (= Mid's
+            # 351 ms / 2). Memory-only swaps (LPDDR upgrades) keep the
+            # same compute and so prefill doesn't move (ratio = 1.0).
             ref = RTX_5090_REFERENCE.get_measured(model_key, workload_id)
             host_ms_value = ref.get("host_ms", host_ms) if ref else host_ms
             if prefill_anchor is not None:
-                prefill_tok_s = prefill_anchor * compiler_quality
+                target_peak_tops = hw_peak_tops_for_dtype(hw, required_dtype)
+                anchor_peak_tops = hw_peak_tops_for_dtype(anchor_tier, required_dtype)
+                compute_ratio = (target_peak_tops / max(anchor_peak_tops, 1e-9)
+                                  if anchor_peak_tops > 0 else 1.0)
+                prefill_tok_s = prefill_anchor * compute_ratio * compiler_quality
                 ttft_s_value = (prompt_tokens / prefill_tok_s) + (host_ms_value / 1000.0)
             elif ref is not None:
                 # Fall back to 5090 prefill projection at stock-class BW
