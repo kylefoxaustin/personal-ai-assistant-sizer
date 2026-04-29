@@ -422,15 +422,33 @@ if r["source"] == "dtype_mismatch":
     )
     st.stop()
 
+feas_note = ""
+if r["feasibility"]["verdict"] == "tight":
+    feas_note = (f"  ⚠️ _Tight fit_ — only "
+                 f"{r['feasibility']['headroom_gb']} GB headroom "
+                 f"({r['feasibility']['required_gb']} GB needed of "
+                 f"{r['feasibility']['available_gb']} GB).")
 if r["source"] == "measured":
-    st.success(f"🟢 **Measured** on RTX 5090 — direct bake-off baseline")
+    st.success(
+        f"🟢 **Measured** on RTX 5090 — direct bake-off baseline."
+        f"{feas_note}"
+    )
+elif r["source"] == "measured_anchor":
+    # Tier-level measured-decode-tok/s override hit this projection. Decode
+    # is anchored to real silicon; TTFT / prefill still 5090-projected.
+    # Per [docs] 2026-04-29 12:34 tactical interim; Path C (Phase 2 compute
+    # clamp) will replace this with a calibrated efficiency model.
+    _proj_marker = " (×BW-upgrade)" if getattr(hw, "bw_projected", False) else ""
+    st.success(
+        f"🟢 **Decode anchored** on {hw.tier_lookup_name} silicon "
+        f"(Skippy bake-off measurement{_proj_marker}). TTFT and prefill "
+        f"still BW-projected from RTX 5090 reference (effective-BW ratio: "
+        f"{hw.effective_bandwidth_gbs / 1523.2:.3f}). Tactical interim — "
+        f"Phase 2 compute-clamp model will replace this with a calibrated "
+        f"per-tier efficiency factor."
+        f"{feas_note}"
+    )
 else:
-    feas_note = ""
-    if r["feasibility"]["verdict"] == "tight":
-        feas_note = (f"  ⚠️ _Tight fit_ — only "
-                     f"{r['feasibility']['headroom_gb']} GB headroom "
-                     f"({r['feasibility']['required_gb']} GB needed of "
-                     f"{r['feasibility']['available_gb']} GB).")
     st.info(f"🟡 **Projected** — BW-scaled from RTX 5090 reference. "
             f"Effective-bandwidth ratio: {hw.effective_bandwidth_gbs / 1523.2:.3f}."
             f"{feas_note}")
@@ -1364,9 +1382,10 @@ st.caption(
     "Lower tier → more bandwidth-bound → slower decode. "
     "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
     "(uniform `bandwidth_efficiency` across tiers). "
-    "Src: 🟢 measured · 🟡 BW-projected · ⚡ memory-upgrade variant "
-    "(decode BW-scaled, TTFT held at stock) · 🔴 won't fit / dtype "
-    "mismatch · ⚠️ tight memory headroom."
+    "Src: 🟢 silicon-anchored decode (5090 measurement OR tier-level "
+    "Skippy bake-off anchor) · 🟡 BW-projected from RTX 5090 · "
+    "⚡ memory-upgrade variant (decode BW-scaled, TTFT held at stock) · "
+    "🔴 won't fit / dtype mismatch · ⚠️ tight memory headroom."
 )
 rows = []
 for stock_tname, stock_thw in TIERS.items():
@@ -1416,12 +1435,16 @@ for stock_tname, stock_thw in TIERS.items():
             })
             continue
         # Pick Src icon: ⚡ for memory-upgrade variant (its row uses the
-        # cloned hw, which carries bw_projected=True); else 🟢/🟡 by
-        # measured-vs-projected. Append ⚠️ for tight memory headroom.
+        # cloned hw, which carries bw_projected=True); else 🟢 for any
+        # silicon-anchored decode (5090 measured cell OR tier-level
+        # measured_decode_overrides) / 🟡 for pure 5090 BW-projection.
+        # Append ⚠️ for tight memory headroom.
         if getattr(thw, "bw_projected", False):
             src_icon = "⚡"
+        elif rr["source"] in ("measured", "measured_anchor"):
+            src_icon = "🟢"
         else:
-            src_icon = "🟢" if rr["source"] == "measured" else "🟡"
+            src_icon = "🟡"
         if rr["feasibility"]["verdict"] == "tight":
             src_icon = src_icon + "⚠️"
         rows.append({

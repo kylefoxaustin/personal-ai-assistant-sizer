@@ -63,6 +63,24 @@ class Hardware:
     # use `name` so the variant suffix surfaces in headings.
     stock_name: str | None = None
 
+    # Tier-level measured-decode-tok/s override per model_key. When set,
+    # `project_llm` clamps the BW-projection from RTX_5090_REFERENCE to
+    # this value for the matching model (BW-scaled if the user has
+    # toggled a memory upgrade). Use for cases where a tier-class anchor
+    # is measured on real silicon and the 5090-extrapolation is known to
+    # mis-estimate (e.g. NPU Mid measured at 37.85 tok/s on Skippy MoE
+    # Q4_K_M, vs 5090-projection ~13.9). Tactical interim per [docs]
+    # 2026-04-29 12:34 spec; Path C (Phase 2 compute clamp proper) will
+    # replace this with a calibrated efficiency model.
+    measured_decode_overrides: dict[str, float] | None = None
+    # Tier-level measured-prefill-tok/s override per model_key. When set,
+    # `project_llm` clamps prefill_tok_s to this value (held at stock
+    # under memory upgrades — prefill is compute-bound). Derived by
+    # inverting a measured TTFT @ known prompt length: prefill_tok_s =
+    # prompt_tokens / (ttft_s - host_overhead_s). Same tactical-interim
+    # framing as `measured_decode_overrides`.
+    measured_prefill_overrides: dict[str, float] | None = None
+
     @property
     def effective_bandwidth_gbs(self) -> float:
         return self.mem_bandwidth_gbs * self.bandwidth_efficiency
@@ -161,6 +179,24 @@ NPU_MID = Hardware(
     mem_bus_width_bits=128, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.65, bandwidth_efficiency=0.70,
     tdp_watts=25.0,
+    # Measured-decode anchor: NPU Mid silicon bake-off on Skippy
+    # Qwen3-30B-A3B Q4_K_M MoE → 37.85 tok/s (vs 5090-projection
+    # ~13.9 — 5090-extrapolation under-predicts for cross-class
+    # silicon because kernel efficiency factors don't transfer).
+    # Per [docs] 2026-04-29 12:34 tactical interim; Path C
+    # (Phase 2 compute clamp) replaces this with a calibrated model.
+    measured_decode_overrides={
+        "qwen3-30b-a3b-q4-moe": 37.85,
+    },
+    # Same Skippy MoE Mid bake-off: 351 ms TTFT @ 1K prompt. Inverting:
+    # prefill_tok_s ≈ 1000 / 0.351 = 2849 tok/s. Per-workload TTFT then
+    # derives from prompt_tokens / 2849 + host overhead, matching the
+    # measured anchor exactly at 1K prompt and scaling linearly with
+    # prompt length elsewhere (prefill is compute-bound, prompt-length-
+    # proportional within the same model architecture).
+    measured_prefill_overrides={
+        "qwen3-30b-a3b-q4-moe": 2849.0,
+    },
 )
 
 NPU_HIGH = Hardware(
@@ -809,6 +845,49 @@ def project_llm(
             "host_ms": ref.get("host_ms", host_ms),
         }
         source = "projected"
+
+        # Tier-level measured-decode-tok/s override (per [docs] 2026-04-29
+        # 12:34 tactical interim). When the hw has a measured anchor for
+        # this model, replace the BW-projection with the measured value
+        # — RTX 5090 cross-class extrapolation is known to mis-estimate
+        # because per-tier kernel efficiency factors don't transfer
+        # uniformly. Decode tok/s is roughly prompt-invariant on MoE
+        # (BW-bound, bytes-per-token doesn't change with prompt length),
+        # so a tier-level override applies cleanly across all workloads.
+        # TTFT and prefill stay 5090-projected — only decode is anchored.
+        # LPDDR6 composition: scale the override by upgraded/stock BW
+        # ratio so memory upgrades still surface their decode lift.
+        # Path C (Phase 2 compute clamp) replaces this with a calibrated
+        # efficiency model rolled across vision + LLM workloads.
+        _override_key = model_key
+        _override_map = hw.measured_decode_overrides or {}
+        if _override_key not in _override_map:
+            _alias = MODELS.get(model_key, {}).get("measurement_alias")
+            if _alias and _alias in _override_map:
+                _override_key = _alias
+        _override = _override_map.get(_override_key)
+        if _override is not None:
+            if hw.bw_projected and hw.stock_mem_bandwidth_gbs:
+                _bw_scale = hw.mem_bandwidth_gbs / hw.stock_mem_bandwidth_gbs
+            else:
+                _bw_scale = 1.0
+            m["decode_tok_s"] = _override * _bw_scale * compiler_quality
+            source = "measured_anchor"
+
+        # Companion prefill override (compute-bound, held at stock under
+        # memory upgrades — no BW scaling). Recomputes m["ttft_s"] from
+        # the new prefill rate so the returned ttft_s matches the
+        # measured-anchor framing rather than the stale BW-projection.
+        _prefill_override_map = hw.measured_prefill_overrides or {}
+        _prefill_override_key = _override_key  # reuse alias resolution
+        if _prefill_override_key not in _prefill_override_map:
+            _prefill_override_key = model_key
+        _prefill_override = _prefill_override_map.get(_prefill_override_key)
+        if _prefill_override is not None:
+            m["prefill_tok_s"] = _prefill_override * compiler_quality
+            _host_s_for_ttft = (m.get("host_ms") or host_ms) / 1000.0
+            m["ttft_s"] = (prompt_tokens / m["prefill_tok_s"]) + _host_s_for_ttft
+            source = "measured_anchor"
 
     decode_s = decode_tokens / m["decode_tok_s"] if m["decode_tok_s"] > 0 else 0.0
     prefill_s = prompt_tokens / m["prefill_tok_s"] if m["prefill_tok_s"] > 0 else 0.0
