@@ -141,7 +141,12 @@ def tier_precision_capability(hw_name: str) -> dict[str, str]:
     if hw_name == "NPU Low-LP5X":
         return {"bf16/fp16": _CAP_TENSOR, "fp8": _CAP_TENSOR, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
     if hw_name == "NPU Mid":
-        return {"bf16/fp16": _CAP_TENSOR, "fp8": _CAP_TENSOR, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
+        # Per [docs] 2026-04-29 14:58 spec correction: actual Mid silicon
+        # is INT8-only, no FP path. bf16 / fp8 / fp16 capabilities are
+        # not present on the chip. INT8 stays tensor_native; Q4_K_M
+        # stays tensor_native (weight-only quant runs via the INT8
+        # dequant path — that's what Skippy's measured anchor proves).
+        return {"bf16/fp16": _CAP_NONE, "fp8": _CAP_NONE, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
     if hw_name == "NPU High":
         return {"bf16/fp16": _CAP_TENSOR, "fp8": _CAP_TENSOR, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
     # Default conservative — unknown tier

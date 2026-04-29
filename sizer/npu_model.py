@@ -250,7 +250,15 @@ NPU_LOW_LP5X = Hardware(
 
 NPU_MID = Hardware(
     name="NPU Mid",
-    peak_tops_bf16=200.0, peak_tops_int8=400.0, peak_tops_fp8=400.0,
+    # INT8-only silicon per [docs] 2026-04-29 14:58 spec correction.
+    # Earlier 200 BF16 / 400 INT8 / 400 FP8 multi-precision label was
+    # incorrect — the actual chip is INT8-only @ 200 TOPS, no FP path.
+    # The Skippy MoE Q4 measurement (37.85 tok/s anchor) ran on this
+    # INT8/INT4 silicon, so calibration constants (llm_prefill_util_factor=
+    # 0.10, llm_decode_bw_realization=0.66 captured in anchor) are
+    # already INT8-native. This is a label-correctness fix, not a math
+    # change.
+    peak_tops_bf16=0.0, peak_tops_int8=200.0, peak_tops_fp8=0.0,
     mem_bandwidth_gbs=134.4, mem_capacity_gb=24.0,
     mem_bus_width_bits=128, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.65, bandwidth_efficiency=0.70,
@@ -480,7 +488,12 @@ MODELS: dict[str, dict] = {
         "experts_per_token": 8,
         "vocab_size": 151936,
         "ctx_len_trained": 262144,
-        "compute_dtype": "fp16",
+        # INT8 execution dtype reflects Skippy's actual NPU runtime:
+        # Q4_K_M weight-only quant → INT8 dequant + INT8 matmul on
+        # dedicated INT8 silicon (vs llama-cpp-python's fp16 dequant
+        # path that runs on GPU). The Mid bake-off (37.85 tok/s anchor)
+        # ran via the INT8 path on INT8-only NPU Mid. Per [docs] 14:58.
+        "compute_dtype": "int8",
         "quant_scheme": "Q4_K_M",
         # Production reference for the v2+RAG accuracy axis. Other
         # models compute Δ vs this row. category_deltas is empty
@@ -523,7 +536,9 @@ MODELS: dict[str, dict] = {
         "experts_per_token": 8,
         "vocab_size": 151936,
         "ctx_len_trained": 262144,
-        "compute_dtype": "fp16",
+        # Same INT8 path as Skippy MoE Q4 (architecture sibling). Runs
+        # on the same NPU runtime via the same Q4 → INT8 path.
+        "compute_dtype": "int8",
         "quant_scheme": "Q4_K_M",
         # Architecture is identical to qwen3-30b-a3b-q4-moe (Skippy fine-
         # tune) — same total/active params, same expert routing — so
@@ -594,6 +609,19 @@ def hw_supports_dtype(hw: "Hardware", dtype: str) -> bool:
     if attr is None:
         return False
     return getattr(hw, attr, 0.0) > 0.0
+
+
+def hw_peak_tops_for_dtype(hw: "Hardware", dtype: str) -> float:
+    """Raw peak TOPS for a dtype, without compute_efficiency multiplier.
+    LLM cross-class compute floor uses this against llm_prefill_util_factor
+    (which was calibrated by [backend] 2026-04-29 13:17 against raw peak,
+    not effective_tops). Vision cross-class compute floor still uses
+    `effective_tops()` because vision util_factors were calibrated that
+    way (see compute_util_factor docstring)."""
+    attr = _DTYPE_ATTR.get(dtype.lower())
+    if attr is None:
+        return 0.0
+    return float(getattr(hw, attr, 0.0))
 
 
 def model_active_bytes_per_token(model_key: str) -> float:
@@ -833,20 +861,22 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
 
     # 3) Cross-class fallback: two-floor MAX(BW, compute) per token.
     # Uses LLM-specific calibration (llm_prefill_util_factor for compute
-    # floor; llm_decode_bw_realization on BW floor) per [backend] 13:17
-    # — vision util factors don't transfer to LLM kernels.
+    # floor against RAW peak — [backend] 13:17 calibration; using
+    # effective_tops would double-count compute_efficiency).
+    # llm_decode_bw_realization on BW floor uses effective_bandwidth_gbs
+    # (bandwidth_efficiency stays applied per [backend]'s formula).
     model_meta = MODELS[model_key]
     active_params_gb = (model_meta["active_params"]
                          * model_meta["bytes_per_param"]) / 1e9
     gops_per_token = (2 * model_meta["active_params"]) / 1e9
     required_dtype = model_meta.get("compute_dtype", "fp16")
-    eff_tops = hw.effective_tops(required_dtype)
+    peak_tops_llm = hw_peak_tops_for_dtype(hw, required_dtype)
     decode_bw_realized = (hw.effective_bandwidth_gbs
                            * hw.llm_decode_bw_realization
                            * effective_npu_share)
     bw_floor_ms = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
     compute_floor_ms = gops_per_token / max(
-        eff_tops * hw.llm_prefill_util_factor, 1e-9
+        peak_tops_llm * hw.llm_prefill_util_factor, 1e-9
     )
     per_token_ms = max(bw_floor_ms, compute_floor_ms)
     tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
@@ -1016,7 +1046,11 @@ def project_llm(
     # gops_per_token = 2 × active_params for matmul-bound forward (per
     # [backend] 12:38; matches the GPT-style transformer FLOP estimate).
     gops_per_token = (2 * model_meta["active_params"]) / 1e9
-    eff_tops = hw.effective_tops(required_dtype)
+    # LLM cross-class compute floor uses RAW peak (not effective_tops):
+    # llm_prefill_util_factor was calibrated by [backend] 13:17 against
+    # peak directly (200 BF16 TOPS × 0.10 in their math). Using
+    # effective_tops would double-count compute_efficiency.
+    peak_tops_llm = hw_peak_tops_for_dtype(hw, required_dtype)
     # Effective NPU_share (per [docs] 2026-04-29 14:38 spec): fraction of
     # peak DRAM BW available to the NPU. Falls back to tier default
     # (5090=1.0, NPU tiers=0.75 typical SoC contention). Affects DECODE
@@ -1084,9 +1118,10 @@ def project_llm(
                                  / (prefill_bw_ratio ** 0.5)
                                  / compiler_quality)
             else:
-                # No prefill data anywhere — derive from compute floor.
+                # No prefill data anywhere — derive from LLM compute floor
+                # (raw peak × llm_prefill_util_factor per [backend] 13:17).
                 compute_floor_ms = (gops_per_token * prompt_tokens) / max(
-                    eff_tops * hw.compute_util_factor, 1e-9
+                    peak_tops_llm * hw.llm_prefill_util_factor, 1e-9
                 )
                 ttft_ms = compute_floor_ms + hw.compute_overhead_ms
                 prefill_tok_s = prompt_tokens / max(ttft_ms / 1000.0, 1e-6)
@@ -1125,7 +1160,7 @@ def project_llm(
                                    * effective_npu_share)
             bw_floor_ms_decode = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
             compute_floor_ms_decode = gops_per_token / max(
-                eff_tops * hw.llm_prefill_util_factor, 1e-9
+                peak_tops_llm * hw.llm_prefill_util_factor, 1e-9
             )
             per_token_ms = max(bw_floor_ms_decode, compute_floor_ms_decode)
             decode_tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
@@ -1138,7 +1173,7 @@ def project_llm(
             bw_floor_ms_prefill = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
             compute_floor_ms_prefill = (
                 gops_per_token * prompt_tokens
-                / max(eff_tops * hw.llm_prefill_util_factor, 1e-9)
+                / max(peak_tops_llm * hw.llm_prefill_util_factor, 1e-9)
             )
             ttft_ms = max(bw_floor_ms_prefill, compute_floor_ms_prefill) + hw.compute_overhead_ms
             prefill_tok_s = prompt_tokens / max(ttft_ms / 1000.0, 1e-6) * compiler_quality
