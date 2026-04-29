@@ -201,6 +201,50 @@ with st.sidebar:
              "from Skippy live on this tier.",
     )
     hw = TIERS[tier_name]
+
+    # ── Memory-type upgrade sub-selector for Mid + High ──────────────
+    # [docs] 2026-04-29: lets users preview LPDDR6 @ 12/14 GT/s on Mid
+    # and High without burning a top-level tier slot. Mirrors keyhole-
+    # sizer commit ecc3ba8. Other tiers (Low-LP4/LP5/LP5X, 5090) don't
+    # get the option — they're characterized by their specific memory
+    # generation, and 5090 is the reference.
+    if tier_name in ("NPU Mid", "NPU High"):
+        from sizer.npu_model import LPDDR6_UPGRADE_OPTIONS, hw_with_memory
+        _stock_label = f"{hw.mem_type} @ {hw.mem_data_rate_gtps:.1f} GT/s (stock)"
+        _mem_options = [(_stock_label, hw.mem_type, hw.mem_data_rate_gtps)] + \
+                        LPDDR6_UPGRADE_OPTIONS
+        _mem_choice = st.selectbox(
+            "Memory upgrade",
+            options=[opt[0] for opt in _mem_options],
+            index=0,
+            help=(
+                "Preview an LPDDR6 swap on this tier. Holds 70% bandwidth "
+                "efficiency uniformly (slightly conservative — LPDDR6 "
+                "typically realizes 75-80% in practice per JEDEC). All "
+                "other tier specs (TOPS, capacity, TDP) stay unchanged — "
+                "this is a memory-only swap. Decode tok/s scales linearly "
+                "with peak BW (BW-bound). TTFT held at stock — prefill is "
+                "compute-bound, not BW-bound, so a memory-only swap "
+                "shouldn't move it."
+            ),
+            key=f"mem_upgrade_{tier_name}",
+        )
+        _chosen = next(opt for opt in _mem_options if opt[0] == _mem_choice)
+        if _chosen[0] != _stock_label:
+            # Memory swap requested — clone the tier with new memory.
+            # name_suffix surfaces in describe_hw() so users see the
+            # variant on every downstream display.
+            _suffix = f"{_chosen[1]}-{_chosen[2]:.0f}"
+            hw = hw_with_memory(hw, _chosen[1], _chosen[2], name_suffix=_suffix)
+            st.caption(
+                f"⚡ Memory upgrade: **{_chosen[1]} @ {_chosen[2]:.0f} GT/s** → "
+                f"**{hw.mem_bandwidth_gbs:.1f} GB/s** peak / "
+                f"**{hw.effective_bandwidth_gbs:.1f} GB/s** effective "
+                f"({hw.mem_bandwidth_gbs / TIERS[tier_name].mem_bandwidth_gbs:.2f}× "
+                f"vs stock). Decode tok/s scales by this ratio; TTFT held "
+                f"at stock (prefill is compute-bound)."
+            )
+
     # One-liner description below the selectbox — matches keyhole-sizer's
     # describe_hw() caption pattern so users see silicon specs inline.
     st.caption(describe_hw(hw))
@@ -386,7 +430,22 @@ else:
 
 # Top-line numeric metrics
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Decode tok/s", f"{r['decode_tok_s']:.1f}")
+# Flip the decode tile label to mark it as BW-projected when the user
+# toggled an LPDDR6 memory upgrade — `hw_with_memory()` BW-scaled the
+# decode tok/s rather than reading a vendor measurement of LPDDR6 silicon.
+# Mirrors keyhole-sizer commit ecc3ba8.
+_decode_label = "Decode tok/s"
+_decode_help = None
+if getattr(hw, "bw_projected", False):
+    _decode_label = "Decode tok/s (BW-proj)"
+    _decode_help = (
+        "BW-projected: decode tok/s scaled from the RTX 5090 reference "
+        "by the upgraded peak-BW ratio (active-param weights are BW-bound "
+        "on MoE — bytes-per-token streamed from DRAM scales linearly with "
+        "BW). TTFT held at stock — prefill is compute-bound. Memory swap "
+        "is what-if; not a vendor measurement of LPDDR6 silicon."
+    )
+c1.metric(_decode_label, f"{r['decode_tok_s']:.1f}", help=_decode_help)
 c2.metric("Prefill tok/s", f"{r['prefill_tok_s']:.0f}")
 c3.metric("Total latency", f"{r['total_s']:.2f} s")
 c4.metric("Decode portion", f"{r['decode_s']:.2f} s")

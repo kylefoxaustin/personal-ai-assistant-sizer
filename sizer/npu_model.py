@@ -14,7 +14,7 @@ in the sizer UI next to every projected cell.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 # ───────────────────────── Hardware tiers ─────────────────────────
@@ -43,6 +43,18 @@ class Hardware:
     # Schema: {model_key: {workload_id: {"decode_tok_s": float, "ttft_s": float,
     #                                     "prefill_tok_s": float, "host_ms": float}}}
     measured_llm: dict[str, dict[str, dict[str, float]]] | None = None
+
+    # True when this Hardware was synthesized via `hw_with_memory()` (i.e.
+    # represents a memory-only LPDDR6 what-if upgrade, not stock silicon).
+    # UI checks this to mark BW-projected LLM tok/s as "(BW-proj)" so users
+    # don't mistake a what-if projection for a vendor-measured number.
+    # Mirrors keyhole-sizer commit ecc3ba8.
+    bw_projected: bool = False
+    # Snapshot of stock peak BW captured by `hw_with_memory()`. Lets
+    # `project_llm` hold TTFT/prefill at the stock value (prefill is
+    # compute-bound, not BW-bound, so a memory-only swap shouldn't move it)
+    # while still letting decode tok/s scale up with the upgraded BW.
+    stock_mem_bandwidth_gbs: float | None = None
 
     @property
     def effective_bandwidth_gbs(self) -> float:
@@ -170,6 +182,57 @@ TIERS = {t.name: t for t in (
 
 HW_SLUGS = {t.name: t.name.lower().replace(" ", "_").replace("(", "").replace(")", "").replace(",", "")
             for t in TIERS.values()}
+
+
+# ───────────────────────── LPDDR6 memory-upgrade overlay ─────────────────────
+# Mirrors keyhole-sizer commit ecc3ba8 (2026-04-29). Lets users preview an
+# LPDDR6 swap on an existing tier without redefining the whole tier — same
+# bus width / TOPS / capacity / TDP / capability_levels, just faster memory.
+# Decode tok/s scales linearly with peak BW (active-param weights stream
+# through DRAM per token). TTFT held at stock — prefill is compute-bound.
+
+LPDDR6_UPGRADE_OPTIONS: list[tuple[str, str, float]] = [
+    ("LPDDR6 @ 12 GT/s", "LPDDR6", 12.0),
+    ("LPDDR6 @ 14 GT/s", "LPDDR6", 14.0),
+]
+
+
+def hw_with_memory(hw: Hardware, mem_type: str, mem_data_rate_gtps: float,
+                    name_suffix: str | None = None) -> Hardware:
+    """Return a Hardware copy with the memory swapped (data-rate + type),
+    bandwidth recomputed from bus width × data rate / 8, and an annotated
+    name so downstream UI surfaces the variant.
+
+    Decode tok/s naturally scales with the upgraded BW because `project_llm`
+    (and `decode_tok_s_at_context`) BW-projects via `hw.effective_bandwidth_gbs`
+    against the RTX 5090 reference. Active-param weights stream through DRAM
+    per decoded token — BW-bound regime; `bandwidth_efficiency` cancels at
+    the uniform 0.70 the rest of the model uses.
+
+    TTFT (prefill) is held at stock — `project_llm` reads
+    `stock_mem_bandwidth_gbs` for prefill scaling when set, so a memory-only
+    swap doesn't move TTFT. Prefill is compute-bound (TOPS, not BW), so a
+    memory-only swap shouldn't move it. Per [docs] 2026-04-29 spec mirroring
+    [backend]'s deck tier-specs framing of TTFT as "0.351 s †" with the †
+    footnote calling it out as compute-bound.
+
+    The `bw_projected` flag is set to True so the UI can mark BW-scaled LLM
+    numbers as projections rather than vendor measurements.
+
+    TOPS / capacity / TDP / efficiencies are silicon-fixed and stay
+    unchanged.
+    """
+    new_bw = hw.mem_bus_width_bits * mem_data_rate_gtps / 8
+    new_name = hw.name if name_suffix is None else f"{hw.name} ({name_suffix})"
+    return replace(
+        hw,
+        name=new_name,
+        mem_type=mem_type,
+        mem_data_rate_gtps=mem_data_rate_gtps,
+        mem_bandwidth_gbs=new_bw,
+        bw_projected=True,
+        stock_mem_bandwidth_gbs=hw.mem_bandwidth_gbs,
+    )
 
 
 # ───────────────────────── Models ─────────────────────────
@@ -695,13 +758,23 @@ def project_llm(
                 "or run eval/run_sizer_bakeoffs.py against a Skippy instance."
             )
         bw_ratio = hw.effective_bandwidth_gbs / RTX_5090_REFERENCE.effective_bandwidth_gbs
+        # Prefill BW ratio: when this hw is an LPDDR6 memory-upgrade clone
+        # (`bw_projected=True`), use the stock BW for prefill/TTFT scaling —
+        # prefill is compute-bound (TOPS, not BW), so a memory-only swap
+        # shouldn't move it. Decode (BW-bound) still uses the upgraded BW.
+        # Per [docs] 2026-04-29 spec mirroring keyhole commit ecc3ba8.
+        if hw.bw_projected and hw.stock_mem_bandwidth_gbs is not None:
+            stock_eff_bw = hw.stock_mem_bandwidth_gbs * hw.bandwidth_efficiency
+            prefill_bw_ratio = stock_eff_bw / RTX_5090_REFERENCE.effective_bandwidth_gbs
+        else:
+            prefill_bw_ratio = bw_ratio
         # Decode is bandwidth-bound → tok/s scales linearly with effective BW.
         # Prefill is compute-bound → tok/s scales more weakly; use sqrt of BW
         # ratio as a rough stand-in until we add per-tier compute anchors.
         m = {
             "decode_tok_s": ref["decode_tok_s"] * bw_ratio * compiler_quality,
-            "prefill_tok_s": ref["prefill_tok_s"] * (bw_ratio ** 0.5) * compiler_quality,
-            "ttft_s": ref["ttft_s"] / (bw_ratio ** 0.5) / compiler_quality,
+            "prefill_tok_s": ref["prefill_tok_s"] * (prefill_bw_ratio ** 0.5) * compiler_quality,
+            "ttft_s": ref["ttft_s"] / (prefill_bw_ratio ** 0.5) / compiler_quality,
             "host_ms": ref.get("host_ms", host_ms),
         }
         source = "projected"
