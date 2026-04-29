@@ -195,8 +195,10 @@ with st.sidebar:
              "tensor cores (~50 BF16 TOPS, 100 INT8/FP8 TOPS). "
              "Mid = 128-bit LPDDR5X @ 8.4 GT/s (Keyhole/Skippy shipping "
              "target, 24 GB DRAM, 25 W — primary design point). "
-             "High = 128-bit LPDDR5T @ 11.2 GT/s (vendor high-bin, 32 GB, 40 W; "
-             "LPDDR5T = Samsung's >10 GT/s LPDDR5-class extension). "
+             "High = 128-bit LPDDR5X @ 8.4 GT/s (same memory class as Mid; "
+             "differentiates on COMPUTE — 275/550/550 TOPS BF16/INT8/FP8 — and "
+             "CAPACITY — 32 GB DRAM, 40 W). Memory upgrades (LPDDR5T 11.2, "
+             "LPDDR6 12/14) are available as overlays on either Mid or High. "
              "RTX 5090 = 512-bit GDDR7 @ 28 GT/s (1792 GB/s) — reference "
              "silicon for every BW projection here. Measured bake-offs "
              "from Skippy live on this tier.",
@@ -210,14 +212,14 @@ with st.sidebar:
     # get the option — they're characterized by their specific memory
     # generation, and 5090 is the reference.
     if tier_name in ("NPU Mid", "NPU High"):
-        from sizer.npu_model import LPDDR6_UPGRADE_OPTIONS, hw_with_memory
+        from sizer.npu_model import MEMORY_UPGRADE_OPTIONS, hw_with_memory
         # Stock label is generic ("Stock (no upgrade)") rather than a
         # spec string so the dropdown reads as a binary "upgrade or
         # not" choice — silicon specs already show in describe_hw()
         # caption directly below the selectbox, so spec info isn't lost.
         _stock_label = "Stock (no upgrade)"
         _mem_options = [(_stock_label, hw.mem_type, hw.mem_data_rate_gtps)] + \
-                        LPDDR6_UPGRADE_OPTIONS
+                        MEMORY_UPGRADE_OPTIONS
         _mem_choice = st.selectbox(
             "Memory upgrade",
             options=[opt[0] for opt in _mem_options],

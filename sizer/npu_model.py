@@ -166,13 +166,14 @@ NPU_MID = Hardware(
 NPU_HIGH = Hardware(
     name="NPU High",
     peak_tops_bf16=275.0, peak_tops_int8=550.0, peak_tops_fp8=550.0,
-    mem_bandwidth_gbs=179.2, mem_capacity_gb=32.0,
-    # LPDDR5T (Samsung's marketing for the >10 GT/s LPDDR5-class
-    # extension) — JEDEC LPDDR5X officially tops out at 8.533 GT/s
-    # (9.6 with the optional extension), so 11.2 GT/s on stock LPDDR5X
-    # is not physically possible. Vendor high-bin parts at this rate
-    # ship as LPDDR5T. BW math unchanged.
-    mem_bus_width_bits=128, mem_type="LPDDR5T", mem_data_rate_gtps=11.2,
+    # Same memory class as NPU Mid (128-bit LPDDR5X @ 8.4 GT/s = 134.4
+    # GB/s). NPU High differentiates from Mid on COMPUTE and CAPACITY
+    # rather than memory BW: 1.375× TOPS, 1.33× DRAM, higher compute
+    # efficiency (0.70 vs 0.65), 1.6× TDP. Memory upgrades (LPDDR5T,
+    # LPDDR6) are surfaced separately as upgrade-path overlays via
+    # MEMORY_UPGRADE_OPTIONS — not baked into the tier definition.
+    mem_bandwidth_gbs=134.4, mem_capacity_gb=32.0,
+    mem_bus_width_bits=128, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.70, bandwidth_efficiency=0.70,
     tdp_watts=40.0,
 )
@@ -205,16 +206,24 @@ HW_SLUGS = {t.name: t.name.lower().replace(" ", "_").replace("(", "").replace(")
             for t in TIERS.values()}
 
 
-# ───────────────────────── LPDDR6 memory-upgrade overlay ─────────────────────
-# Mirrors keyhole-sizer commit ecc3ba8 (2026-04-29). Lets users preview an
-# LPDDR6 swap on an existing tier without redefining the whole tier — same
-# bus width / TOPS / capacity / TDP / capability_levels, just faster memory.
-# Decode tok/s scales linearly with peak BW (active-param weights stream
-# through DRAM per token). TTFT held at stock — prefill is compute-bound.
+# ───────────────────────── Memory upgrade overlay ────────────────────────────
+# Mirrors keyhole-sizer commit ecc3ba8 (2026-04-29). Lets users preview a
+# faster-memory swap on an existing tier without redefining the whole tier —
+# same bus width / TOPS / capacity / TDP / capability_levels, just faster
+# memory. Decode tok/s scales linearly with peak BW (active-param weights
+# stream through DRAM per token). TTFT held at stock — prefill is compute-
+# bound.
+#
+# Options sorted ascending by data rate (= BW at fixed bus width):
+#   LPDDR5T @ 11.2 GT/s — Samsung's >10 GT/s LPDDR5-class extension; first
+#                         step beyond stock LPDDR5X @ 8.4 GT/s.
+#   LPDDR6 @ 12 GT/s    — first LPDDR6 spec rate.
+#   LPDDR6 @ 14 GT/s    — top-bin LPDDR6.
 
-LPDDR6_UPGRADE_OPTIONS: list[tuple[str, str, float]] = [
-    ("LPDDR6 @ 12 GT/s", "LPDDR6", 12.0),
-    ("LPDDR6 @ 14 GT/s", "LPDDR6", 14.0),
+MEMORY_UPGRADE_OPTIONS: list[tuple[str, str, float]] = [
+    ("LPDDR5T @ 11.2 GT/s", "LPDDR5T", 11.2),
+    ("LPDDR6 @ 12 GT/s",    "LPDDR6",  12.0),
+    ("LPDDR6 @ 14 GT/s",    "LPDDR6",  14.0),
 ]
 
 
