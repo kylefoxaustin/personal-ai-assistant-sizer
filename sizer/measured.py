@@ -66,6 +66,12 @@ def attach_measurements_to_reference() -> dict:
 # Attach at import so anything using the module sees the populated reference.
 _BUNDLE_SUMMARY = attach_measurements_to_reference()
 
+# Phase 2 anchor validation — once measured_llm is populated, run the
+# [backend] anchor list to catch silent regressions in override math,
+# tier_family taxonomy, or BW-scaling. Fail-loud at import.
+from .npu_model import _assert_phase2_anchors
+_assert_phase2_anchors()
+
 
 def get_bundle_summary() -> dict:
     """Read-only accessor for the summary computed at import."""

@@ -428,30 +428,67 @@ if r["feasibility"]["verdict"] == "tight":
                  f"{r['feasibility']['headroom_gb']} GB headroom "
                  f"({r['feasibility']['required_gb']} GB needed of "
                  f"{r['feasibility']['available_gb']} GB).")
+# Phase 2 source classification per [backend] 2026-04-29 12:38 / [docs]
+# 12:34 spec: each cell carries one of five projection-source states.
+# 🟢 measured / measured_anchor — direct silicon measurement
+# 🟡 same_class_anchor          — BW-scaled within tier_family from anchor
+# 🟠 cross_class                — two-floor MAX(BW, compute), no anchor
+# 🔴 wont_fit / dtype_mismatch  — already handled above (st.stop)
+_regime_note = ""
+if r.get("regime"):
+    _regime_word = "BW-bound" if r["regime"] == "bw_bound" else "compute-bound"
+    _regime_note = f" Decode regime: **{_regime_word}**."
 if r["source"] == "measured":
     st.success(
         f"🟢 **Measured** on RTX 5090 — direct bake-off baseline."
+        f"{_regime_note}"
         f"{feas_note}"
     )
 elif r["source"] == "measured_anchor":
-    # Tier-level measured-decode-tok/s override hit this projection. Decode
-    # is anchored to real silicon; TTFT / prefill still 5090-projected.
-    # Per [docs] 2026-04-29 12:34 tactical interim; Path C (Phase 2 compute
-    # clamp) will replace this with a calibrated efficiency model.
-    _proj_marker = " (×BW-upgrade)" if getattr(hw, "bw_projected", False) else ""
+    # Direct hit on a tier-level Skippy bake-off anchor (target IS the
+    # anchor tier, no memory upgrade). Decode is silicon-anchored.
     st.success(
         f"🟢 **Decode anchored** on {hw.tier_lookup_name} silicon "
-        f"(Skippy bake-off measurement{_proj_marker}). TTFT and prefill "
-        f"still BW-projected from RTX 5090 reference (effective-BW ratio: "
-        f"{hw.effective_bandwidth_gbs / 1523.2:.3f}). Tactical interim — "
-        f"Phase 2 compute-clamp model will replace this with a calibrated "
-        f"per-tier efficiency factor."
+        f"(Skippy bake-off measurement). Prefill held at the measured "
+        f"compute-bound rate."
+        f"{_regime_note}"
+        f"{feas_note}"
+    )
+elif r["source"] == "same_class_anchor":
+    # Same memory-class as a tier with a measured anchor; BW-scaled
+    # within the family. Most common case for High stock + MoE
+    # (BW-equal to Mid at stock, same family) or Mid + LPDDR upgrade
+    # (memory-overlay BW-scaling within the same silicon family).
+    _bw_marker = " · ×BW-upgrade" if getattr(hw, "bw_projected", False) else ""
+    st.info(
+        f"🟡 **Same-class projection** — BW-scaled from a measured anchor "
+        f"in tier-family `{hw.tier_family}`{_bw_marker}. Higher confidence "
+        f"than cross-class extrapolation; lower than a direct measurement "
+        f"on this exact tier."
+        f"{_regime_note}"
+        f"{feas_note}"
+    )
+elif r["source"] == "cross_class":
+    # No anchor in the target's tier family; two-floor MAX(BW_floor,
+    # compute_floor) derived from first principles. Lower confidence
+    # than same-class — kernel-efficiency factors on this silicon class
+    # haven't been validated against a measurement yet.
+    st.warning(
+        f"🟠 **Cross-class extrapolation** — no measured anchor in tier-"
+        f"family `{hw.tier_family}` for this model. Decode tok/s derived "
+        f"from two-floor MAX(BW_floor, compute_floor) physics. Lower "
+        f"confidence than same-class projection; numbers are directional."
+        f"{_regime_note}"
         f"{feas_note}"
     )
 else:
-    st.info(f"🟡 **Projected** — BW-scaled from RTX 5090 reference. "
-            f"Effective-bandwidth ratio: {hw.effective_bandwidth_gbs / 1523.2:.3f}."
-            f"{feas_note}")
+    # Defensive fallback — shouldn't be reachable given the explicit cases
+    # above, but keeps the banner from crashing if a new source label gets
+    # added without UI handling.
+    st.info(
+        f"⚪ **{r['source']}** — projection state not recognized by UI."
+        f"{feas_note}"
+    )
 
 # Top-line numeric metrics
 # Per [docs] 2026-04-29 11:01 spec: TTFT (the latency users feel) replaces
@@ -1382,10 +1419,13 @@ st.caption(
     "Lower tier → more bandwidth-bound → slower decode. "
     "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
     "(uniform `bandwidth_efficiency` across tiers). "
-    "Src: 🟢 silicon-anchored decode (5090 measurement OR tier-level "
-    "Skippy bake-off anchor) · 🟡 BW-projected from RTX 5090 · "
-    "⚡ memory-upgrade variant (decode BW-scaled, TTFT held at stock) · "
-    "🔴 won't fit / dtype mismatch · ⚠️ tight memory headroom."
+    "Src (Phase 2 projection-source classification): 🟢 measured "
+    "(direct silicon measurement — 5090 cell or tier-level Skippy "
+    "anchor) · 🟡 same-class projection (BW-scaled within tier_family "
+    "from a measured anchor; covers memory-upgrade overlays and "
+    "BW-equal sibling tiers) · 🟠 cross-class extrapolation (two-floor "
+    "MAX(BW, compute) physics — no anchor in tier_family yet) · 🔴 "
+    "won't fit / dtype mismatch · ⚠️ tight memory headroom suffix."
 )
 rows = []
 for stock_tname, stock_thw in TIERS.items():
@@ -1434,17 +1474,19 @@ for stock_tname, stock_thw in TIERS.items():
                          f"(has {'/'.join(d['hw_supports'])})"),
             })
             continue
-        # Pick Src icon: ⚡ for memory-upgrade variant (its row uses the
-        # cloned hw, which carries bw_projected=True); else 🟢 for any
-        # silicon-anchored decode (5090 measured cell OR tier-level
-        # measured_decode_overrides) / 🟡 for pure 5090 BW-projection.
-        # Append ⚠️ for tight memory headroom.
-        if getattr(thw, "bw_projected", False):
-            src_icon = "⚡"
-        elif rr["source"] in ("measured", "measured_anchor"):
-            src_icon = "🟢"
-        else:
-            src_icon = "🟡"
+        # Pick Src icon by Phase 2 source classification:
+        # 🟢 measured (direct cell or anchored on this tier)
+        # 🟡 same_class_anchor (BW-scaled within family — memory-upgrade
+        #    overlays and BW-equal sibling tiers both land here)
+        # 🟠 cross_class (two-floor MAX physics, no anchor in family)
+        # ⚠️ suffix for tight memory headroom.
+        _src_icon_by_class = {
+            "measured": "🟢",
+            "measured_anchor": "🟢",
+            "same_class_anchor": "🟡",
+            "cross_class": "🟠",
+        }
+        src_icon = _src_icon_by_class.get(rr["source"], "⚪")
         if rr["feasibility"]["verdict"] == "tight":
             src_icon = src_icon + "⚠️"
         rows.append({

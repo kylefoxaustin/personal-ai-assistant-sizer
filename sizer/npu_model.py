@@ -36,6 +36,30 @@ class Hardware:
     bandwidth_efficiency: float = 0.70
     tdp_watts: float = 0.0
 
+    # Memory-class taxonomy for the same-class anchor-projection path
+    # (Phase 2). Tiers in the same `tier_family` share enough silicon
+    # characteristics that an anchor measured on one tier can be
+    # BW-scaled within the family with high confidence (🟡 same-class).
+    # Cross-family projection falls through to the two-floor MAX(BW,
+    # compute) cross-class model (🔴). Taxonomy from [backend] 2026-04-29
+    # 13:07: Class 1 Neutron-32-LP5, Class 2 Neutron-64-LP5, Class 3
+    # LP5X-8.4 (Low-LP5X/Mid/High at stock — Mid+High share BW post
+    # 95117df redirect), Class 4 memory-upgrade overlays (LP5T-11.2,
+    # LPDDR6-12, LPDDR6-14 — within-class BW scaling on whatever stock
+    # family the upgrade was applied to), Class 5 GDDR7-28.
+    tier_family: str | None = None
+    # Per-tier compute utilization factor for the cross-class compute
+    # floor: ops_per_token / (effective_tops × util_factor) ms. Anchored
+    # to the i.MX 95 yolov8n-INT8 measurement (12 GOPs / 2 INT8 TOPS / 32
+    # ms = 0.19 utilization). Per [backend] 2026-04-29 12:38 calibration
+    # table: Neutron 0.19, Mid 0.45, High 0.50, 5090 0.85.
+    compute_util_factor: float = 0.45
+    # Per-tier overhead added to compute-floor (kernel launch, sync,
+    # warmup amortization). Default 1 ms NPU / 0.3 ms GPU. Default
+    # absorbed into compute-floor calibration; populate per tier when
+    # anchors fit better.
+    compute_overhead_ms: float = 1.0
+
     # Measured LLM decode tok/s + TTFT per (model_key, workload_id). When
     # populated, project_llm returns these directly for matching cells —
     # bypassing the BW projection. Mirrors keyhole's `measured_llm_*` pattern
@@ -143,6 +167,9 @@ NPU_LOW_LP4 = Hardware(
     mem_bus_width_bits=32, mem_type="LPDDR4", mem_data_rate_gtps=4.266,
     compute_efficiency=0.60, bandwidth_efficiency=0.70,
     tdp_watts=10.0,
+    tier_family="Neutron-32-LP4",  # below LP5 — own family
+    compute_util_factor=0.19,
+    compute_overhead_ms=1.0,
 )
 
 NPU_LOW_LP5_32BIT = Hardware(
@@ -152,6 +179,9 @@ NPU_LOW_LP5_32BIT = Hardware(
     mem_bus_width_bits=32, mem_type="LPDDR5", mem_data_rate_gtps=6.4,
     compute_efficiency=0.60, bandwidth_efficiency=0.70,
     tdp_watts=10.0,
+    tier_family="Neutron-32-LP5",
+    compute_util_factor=0.19,
+    compute_overhead_ms=1.0,
 )
 
 NPU_LOW_LP5_64BIT = Hardware(
@@ -161,6 +191,9 @@ NPU_LOW_LP5_64BIT = Hardware(
     mem_bus_width_bits=64, mem_type="LPDDR5", mem_data_rate_gtps=6.4,
     compute_efficiency=0.60, bandwidth_efficiency=0.70,
     tdp_watts=10.0,
+    tier_family="Neutron-64-LP5",
+    compute_util_factor=0.19,
+    compute_overhead_ms=1.0,
 )
 
 NPU_LOW_LP5X = Hardware(
@@ -170,6 +203,14 @@ NPU_LOW_LP5X = Hardware(
     mem_bus_width_bits=64, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.60, bandwidth_efficiency=0.70,
     tdp_watts=10.0,
+    # Low-LP5X is 64-bit at 8.4 GT/s = 67.2 GB/s — different effective
+    # BW from the Mid/High class (128-bit @ 8.4 GT/s = 134.4 GB/s). Per
+    # [backend] 13:07 taxonomy, bus-width crossings within the LP5X-8.4
+    # data rate are a judgment call; treating Low-LP5X as its own family
+    # for safety (anchors won't transfer).
+    tier_family="LP5X-8.4-64b",
+    compute_util_factor=0.45,
+    compute_overhead_ms=1.0,
 )
 
 NPU_MID = Hardware(
@@ -179,6 +220,11 @@ NPU_MID = Hardware(
     mem_bus_width_bits=128, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.65, bandwidth_efficiency=0.70,
     tdp_watts=25.0,
+    # Memory-class shared with NPU High (128-bit LPDDR5X @ 8.4 GT/s);
+    # an anchor measured on Mid projects to High as 🟡 same-class.
+    tier_family="LP5X-8.4-128b",
+    compute_util_factor=0.45,
+    compute_overhead_ms=1.0,
     # Measured-decode anchor: NPU Mid silicon bake-off on Skippy
     # Qwen3-30B-A3B Q4_K_M MoE → 37.85 tok/s (vs 5090-projection
     # ~13.9 — 5090-extrapolation under-predicts for cross-class
@@ -212,6 +258,13 @@ NPU_HIGH = Hardware(
     mem_bus_width_bits=128, mem_type="LPDDR5X", mem_data_rate_gtps=8.4,
     compute_efficiency=0.70, bandwidth_efficiency=0.70,
     tdp_watts=40.0,
+    # Same memory family as Mid (LP5X-8.4-128b); slightly higher
+    # compute util_factor to reflect the 1.375× TOPS / higher
+    # compute_efficiency / purpose-built HPC silicon (per [backend]
+    # 12:38 calibration table).
+    tier_family="LP5X-8.4-128b",
+    compute_util_factor=0.50,
+    compute_overhead_ms=1.0,
 )
 
 # Reference tier carrying the Skippy RTX 5090 bake-off data. Selected in
@@ -225,6 +278,11 @@ RTX_5090_REFERENCE = Hardware(
     mem_bus_width_bits=512, mem_type="GDDR7", mem_data_rate_gtps=28.0,
     compute_efficiency=0.70, bandwidth_efficiency=0.85,
     tdp_watts=575.0,
+    # Datacenter-class memory controller + huge L2 — own family. All
+    # measured Skippy bake-off cells live on this tier.
+    tier_family="GDDR7-28",
+    compute_util_factor=0.85,
+    compute_overhead_ms=0.3,
 )
 
 
@@ -656,37 +714,76 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
                              compiler_quality: float = 1.0) -> dict:
     """Predict decode tok/s at arbitrary context length for (model, hw).
 
-    Strategy:
-      1. Build calibration anchors from 5090 measurements for this model
-         (every workload profile's measured prompt_tokens + decode_tok_s)
-      2. Log-linear interpolate to get 5090 tok/s at `ctx_tokens`
-      3. Scale by BW ratio for non-5090 tiers (decode is BW-bound)
-      4. Apply compiler_quality multiplier for projected tiers
+    Phase 2 (post 2026-04-29 Plan-C): same anchor-resolution shape as
+    project_llm — measured cell wins, then same-family anchor (BW-scaled
+    within tier_family), then cross-class two-floor MAX. Decode tok/s is
+    roughly prompt-invariant on MoE (BW-bound, bytes-per-token doesn't
+    change with context length), so the per-context curve flattens out
+    at the anchor's value once the same-class anchor takes over. Only
+    the 5090 reference shows meaningful prompt-length variation at this
+    layer (kv-cache thrashing, etc.).
 
-    Returns {"decode_tok_s", "source", "is_projected": bool}"""
+    Returns {"decode_tok_s", "source", "is_projected", "regime"}.
+    """
     # Lazy import to avoid circular dependency with measured.py
     from .measured import calibration_anchors
 
-    anchors_full = calibration_anchors(model_key)
-    if not anchors_full:
-        raise ValueError(f"no calibration data for {model_key}")
+    # 1) RTX 5090 reference: log-linear interpolate from per-workload
+    # bake-off cells (preserves the prompt-length shape we measured).
+    if hw.name == RTX_5090_REFERENCE.name:
+        anchors_full = calibration_anchors(model_key)
+        if not anchors_full:
+            raise ValueError(f"no calibration data for {model_key}")
+        anchors = [(a[0], a[1]) for a in anchors_full]
+        tok_s, interp_source = _log_linear_interpolate(anchors, ctx_tokens)
+        return {
+            "decode_tok_s": tok_s,
+            "source": "measured",
+            "is_projected": False,
+            "regime": "bw_bound",
+            "ctx_tokens": ctx_tokens,
+            "interp_source": interp_source,
+        }
 
-    # Drop workload_id for the interpolator
-    anchors = [(a[0], a[1]) for a in anchors_full]
-    tok_s_5090, interp_source = _log_linear_interpolate(anchors, ctx_tokens)
+    # 2) Same-family anchor — BW-scale the anchor's tok/s within family.
+    # Decode is BW-bound on MoE so prompt length doesn't matter.
+    anchor = _find_same_family_anchor(hw, model_key)
+    if anchor is not None:
+        anchor_tier, decode_anchor, _prefill_anchor = anchor
+        bw_ratio_within_family = hw.mem_bandwidth_gbs / anchor_tier.mem_bandwidth_gbs
+        tok_s = decode_anchor * bw_ratio_within_family * compiler_quality
+        is_direct = (
+            hw.tier_lookup_name == anchor_tier.name and not hw.bw_projected
+        )
+        return {
+            "decode_tok_s": tok_s,
+            "source": "measured_anchor" if is_direct else "same_class_anchor",
+            "is_projected": True,
+            "regime": "bw_bound",
+            "ctx_tokens": ctx_tokens,
+        }
 
-    # BW-scale for non-5090 tiers. compiler_quality only bites on projected.
-    is_projected = (hw.name != RTX_5090_REFERENCE.name)
-    if is_projected:
-        bw_ratio = hw.effective_bandwidth_gbs / RTX_5090_REFERENCE.effective_bandwidth_gbs
-        tok_s = tok_s_5090 * bw_ratio * compiler_quality
-    else:
-        tok_s = tok_s_5090
-
+    # 3) Cross-class fallback: two-floor MAX(BW, compute) per token.
+    model_meta = MODELS[model_key]
+    active_params_gb = (model_meta["active_params"]
+                         * model_meta["bytes_per_param"]) / 1e9
+    gops_per_token = (2 * model_meta["active_params"]) / 1e9
+    required_dtype = model_meta.get("compute_dtype", "fp16")
+    eff_tops = hw.effective_tops(required_dtype)
+    bw_floor_ms = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
+    compute_floor_ms = gops_per_token / max(
+        eff_tops * hw.compute_util_factor, 1e-9
+    )
+    per_token_ms = max(bw_floor_ms, compute_floor_ms)
+    tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
+    regime = ("bw_bound"
+               if bw_floor_ms >= compute_floor_ms
+               else "compute_bound")
     return {
         "decode_tok_s": tok_s,
-        "source": interp_source,
-        "is_projected": is_projected,
+        "source": "cross_class",
+        "is_projected": True,
+        "regime": regime,
         "ctx_tokens": ctx_tokens,
     }
 
@@ -780,6 +877,7 @@ def project_llm(
     if feasibility["verdict"] == "wont_fit":
         return {
             "source": "wont_fit",
+            "regime": None,
             "model_key": model_key,
             "workload_id": workload_id,
             "hw_name": hw.name,
@@ -798,6 +896,7 @@ def project_llm(
         supported = [d for d in ("int8", "fp8", "bf16") if hw_supports_dtype(hw, d)]
         return {
             "source": "dtype_mismatch",
+            "regime": None,
             "model_key": model_key,
             "workload_id": workload_id,
             "hw_name": hw.name,
@@ -812,88 +911,140 @@ def project_llm(
             },
         }
 
-    # 1) Measured wins
+    # ═══════════════════════════════════════════════════════════════════
+    # Phase 2 LLM projection — per [backend] 2026-04-29 12:38 spec, [sizer]
+    # 13:01 + [backend] 13:07 design decisions, [docs] 12:34 greenlight.
+    #
+    # Resolution order (first hit wins):
+    #   1. Per-cell measured (hw.measured_llm[model][workload])      → 🟢 measured
+    #   2. Tier-level anchor on this hw (measured_decode_overrides
+    #      with target hw == anchor hw, no LPDDR upgrade)             → 🟢 measured_anchor
+    #   3. Same-family anchor (measured_decode_overrides on a tier
+    #      sharing tier_family) BW-scaled within family                → 🟡 same_class
+    #   4. Two-floor MAX(BW_floor, compute_floor) cross-class fallback → 🔴 cross_class
+    #
+    # Decode physics:
+    #   bw_floor_ms_per_token = active_params_GB / effective_BW
+    #   compute_floor_ms_per_token = gops_per_token / (effective_TOPS × util)
+    #   per_token_ms = max(bw_floor, compute_floor)
+    #   decode_tok_s = 1000 / per_token_ms
+    #
+    # Prefill physics (TTFT compute, per-batch):
+    #   bw_floor_ms = active_params_GB / effective_BW    (weights read once)
+    #   compute_floor_ms = gops_per_token × prompt_tokens / (eff_TOPS × util)
+    #   ttft_ms = max(bw_floor, compute_floor) + overhead
+    # ═══════════════════════════════════════════════════════════════════
+
+    model_meta = MODELS[model_key]
+    active_params_gb = (model_meta["active_params"]
+                         * model_meta["bytes_per_param"]) / 1e9
+    # gops_per_token = 2 × active_params for matmul-bound forward (per
+    # [backend] 12:38; matches the GPT-style transformer FLOP estimate).
+    gops_per_token = (2 * model_meta["active_params"]) / 1e9
+    eff_tops = hw.effective_tops(required_dtype)
+
+    # 1) Per-cell measured wins (RTX 5090 cells live here).
     m = hw.get_measured(model_key, workload_id)
     source = "measured"
+    regime = "bw_bound"  # MoE decode is BW-bound by physics; refine below
+
     if m is None:
-        # 2) Project from 5090 reference
-        ref = RTX_5090_REFERENCE.get_measured(model_key, workload_id)
-        if ref is None:
-            raise ValueError(
-                f"No reference measurement for ({model_key}, {workload_id}). "
-                "Populate RTX_5090_REFERENCE.measured_llm via measured.py "
-                "or run eval/run_sizer_bakeoffs.py against a Skippy instance."
+        # Resolve same-family anchor (also catches the on-tier anchor
+        # case via tier_lookup_name == anchor_tier.name).
+        anchor = _find_same_family_anchor(hw, model_key)
+
+        if anchor is not None:
+            anchor_tier, decode_anchor, prefill_anchor = anchor
+            is_direct = (
+                hw.tier_lookup_name == anchor_tier.name
+                and not hw.bw_projected
             )
-        bw_ratio = hw.effective_bandwidth_gbs / RTX_5090_REFERENCE.effective_bandwidth_gbs
-        # Prefill BW ratio: when this hw is an LPDDR6 memory-upgrade clone
-        # (`bw_projected=True`), use the stock BW for prefill/TTFT scaling —
-        # prefill is compute-bound (TOPS, not BW), so a memory-only swap
-        # shouldn't move it. Decode (BW-bound) still uses the upgraded BW.
-        # Per [docs] 2026-04-29 spec mirroring keyhole commit ecc3ba8.
-        if hw.bw_projected and hw.stock_mem_bandwidth_gbs is not None:
-            stock_eff_bw = hw.stock_mem_bandwidth_gbs * hw.bandwidth_efficiency
-            prefill_bw_ratio = stock_eff_bw / RTX_5090_REFERENCE.effective_bandwidth_gbs
-        else:
-            prefill_bw_ratio = bw_ratio
-        # Decode is bandwidth-bound → tok/s scales linearly with effective BW.
-        # Prefill is compute-bound → tok/s scales more weakly; use sqrt of BW
-        # ratio as a rough stand-in until we add per-tier compute anchors.
-        m = {
-            "decode_tok_s": ref["decode_tok_s"] * bw_ratio * compiler_quality,
-            "prefill_tok_s": ref["prefill_tok_s"] * (prefill_bw_ratio ** 0.5) * compiler_quality,
-            "ttft_s": ref["ttft_s"] / (prefill_bw_ratio ** 0.5) / compiler_quality,
-            "host_ms": ref.get("host_ms", host_ms),
-        }
-        source = "projected"
-
-        # Tier-level measured-decode-tok/s override (per [docs] 2026-04-29
-        # 12:34 tactical interim). When the hw has a measured anchor for
-        # this model, replace the BW-projection with the measured value
-        # — RTX 5090 cross-class extrapolation is known to mis-estimate
-        # because per-tier kernel efficiency factors don't transfer
-        # uniformly. Decode tok/s is roughly prompt-invariant on MoE
-        # (BW-bound, bytes-per-token doesn't change with prompt length),
-        # so a tier-level override applies cleanly across all workloads.
-        # TTFT and prefill stay 5090-projected — only decode is anchored.
-        # LPDDR6 composition: scale the override by upgraded/stock BW
-        # ratio so memory upgrades still surface their decode lift.
-        # Path C (Phase 2 compute clamp) replaces this with a calibrated
-        # efficiency model rolled across vision + LLM workloads.
-        _override_key = model_key
-        _override_map = hw.measured_decode_overrides or {}
-        if _override_key not in _override_map:
-            _alias = MODELS.get(model_key, {}).get("measurement_alias")
-            if _alias and _alias in _override_map:
-                _override_key = _alias
-        _override = _override_map.get(_override_key)
-        if _override is not None:
-            if hw.bw_projected and hw.stock_mem_bandwidth_gbs:
-                _bw_scale = hw.mem_bandwidth_gbs / hw.stock_mem_bandwidth_gbs
+            # Decode: BW-scale within family. Same family means same data
+            # rate × same bus width or memory-upgrade overlay on the same
+            # silicon. Scale by target_BW / anchor_BW. When target IS the
+            # anchor tier (no upgrade), ratio = 1 and we get the anchor
+            # value directly.
+            bw_ratio_within_family = (
+                hw.mem_bandwidth_gbs / anchor_tier.mem_bandwidth_gbs
+            )
+            decode_tok_s = decode_anchor * bw_ratio_within_family * compiler_quality
+            # Prefill: held at anchor's stock value (compute-bound, not
+            # BW-bound, so memory swap doesn't move it). If anchor doesn't
+            # carry a prefill rate, project from 5090 (5090 cell will give
+            # the per-workload TTFT shape, then we replace the rate).
+            ref = RTX_5090_REFERENCE.get_measured(model_key, workload_id)
+            host_ms_value = ref.get("host_ms", host_ms) if ref else host_ms
+            if prefill_anchor is not None:
+                prefill_tok_s = prefill_anchor * compiler_quality
+                ttft_s_value = (prompt_tokens / prefill_tok_s) + (host_ms_value / 1000.0)
+            elif ref is not None:
+                # Fall back to 5090 prefill projection at stock-class BW
+                stock_bw_for_prefill = (
+                    (anchor_tier.mem_bandwidth_gbs * hw.bandwidth_efficiency)
+                )
+                prefill_bw_ratio = (
+                    stock_bw_for_prefill / RTX_5090_REFERENCE.effective_bandwidth_gbs
+                )
+                prefill_tok_s = (ref["prefill_tok_s"]
+                                  * (prefill_bw_ratio ** 0.5)
+                                  * compiler_quality)
+                ttft_s_value = (ref["ttft_s"]
+                                 / (prefill_bw_ratio ** 0.5)
+                                 / compiler_quality)
             else:
-                _bw_scale = 1.0
-            m["decode_tok_s"] = _override * _bw_scale * compiler_quality
-            source = "measured_anchor"
-
-        # Companion prefill override (compute-bound, held at stock under
-        # memory upgrades — no BW scaling). Recomputes m["ttft_s"] from
-        # the new prefill rate so the returned ttft_s matches the
-        # measured-anchor framing rather than the stale BW-projection.
-        _prefill_override_map = hw.measured_prefill_overrides or {}
-        _prefill_override_key = _override_key  # reuse alias resolution
-        if _prefill_override_key not in _prefill_override_map:
-            _prefill_override_key = model_key
-        _prefill_override = _prefill_override_map.get(_prefill_override_key)
-        if _prefill_override is not None:
-            m["prefill_tok_s"] = _prefill_override * compiler_quality
-            _host_s_for_ttft = (m.get("host_ms") or host_ms) / 1000.0
-            m["ttft_s"] = (prompt_tokens / m["prefill_tok_s"]) + _host_s_for_ttft
-            source = "measured_anchor"
+                # No prefill data anywhere — derive from compute floor.
+                compute_floor_ms = (gops_per_token * prompt_tokens) / max(
+                    eff_tops * hw.compute_util_factor, 1e-9
+                )
+                ttft_ms = compute_floor_ms + hw.compute_overhead_ms
+                prefill_tok_s = prompt_tokens / max(ttft_ms / 1000.0, 1e-6)
+                ttft_s_value = ttft_ms / 1000.0
+            m = {
+                "decode_tok_s": decode_tok_s,
+                "prefill_tok_s": prefill_tok_s,
+                "ttft_s": ttft_s_value,
+                "host_ms": host_ms_value,
+            }
+            source = "measured_anchor" if is_direct else "same_class_anchor"
+            regime = "bw_bound"  # decode is BW-bound at the anchor
+        else:
+            # 4) Cross-class fallback: two-floor MAX(BW, compute).
+            # No same-family anchor, so we derive from first principles.
+            # This replaces the previous 5090-BW-projection — that approach
+            # carried a fixed implicit-realization factor from the 5090
+            # cell which doesn't transfer cleanly across tier-classes (per
+            # [sizer] 13:01 + [backend] 13:07 "replace, not upward-clamp").
+            bw_floor_ms_decode = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
+            compute_floor_ms_decode = gops_per_token / max(
+                eff_tops * hw.compute_util_factor, 1e-9
+            )
+            per_token_ms = max(bw_floor_ms_decode, compute_floor_ms_decode)
+            decode_tok_s = (1000.0 / max(per_token_ms, 1e-6)) * compiler_quality
+            regime = ("bw_bound"
+                       if bw_floor_ms_decode >= compute_floor_ms_decode
+                       else "compute_bound")
+            # Prefill: per-batch BW (weights read once) + per-token compute
+            bw_floor_ms_prefill = (active_params_gb / hw.effective_bandwidth_gbs) * 1000.0
+            compute_floor_ms_prefill = (
+                gops_per_token * prompt_tokens
+                / max(eff_tops * hw.compute_util_factor, 1e-9)
+            )
+            ttft_ms = max(bw_floor_ms_prefill, compute_floor_ms_prefill) + hw.compute_overhead_ms
+            prefill_tok_s = prompt_tokens / max(ttft_ms / 1000.0, 1e-6) * compiler_quality
+            m = {
+                "decode_tok_s": decode_tok_s,
+                "prefill_tok_s": prefill_tok_s,
+                "ttft_s": ttft_ms / 1000.0,
+                "host_ms": hw.compute_overhead_ms,
+            }
+            source = "cross_class"
 
     decode_s = decode_tokens / m["decode_tok_s"] if m["decode_tok_s"] > 0 else 0.0
     prefill_s = prompt_tokens / m["prefill_tok_s"] if m["prefill_tok_s"] > 0 else 0.0
     host_s = (m.get("host_ms") or host_ms) / 1000.0
     return {
         "source": source,
+        "regime": regime,
         "model_key": model_key,
         "workload_id": workload_id,
         "hw_name": hw.name,
@@ -910,6 +1061,37 @@ def project_llm(
     }
 
 
+def _find_same_family_anchor(target_hw: Hardware, model_key: str) -> tuple[Hardware, float, float | None] | None:
+    """Find a tier in the same `tier_family` that has a measured-decode
+    anchor for `model_key`. Returns `(anchor_tier, decode_tok_s, prefill_tok_s_or_None)`
+    or None if no anchor exists in the family.
+
+    Memory-upgrade overlays (hw.bw_projected=True) carry the stock tier's
+    family — `target_hw.tier_family` is inherited via `dataclasses.replace`
+    in `hw_with_memory()`, so an LPDDR6 upgrade on Mid still finds Mid's
+    anchor naturally.
+
+    Alias resolution: if `model_key` declares a `measurement_alias` in
+    MODELS, the alias's anchor is returned when the model itself doesn't
+    have one (e.g. Thinking-2507 picks up Skippy MoE Q4's anchor).
+    """
+    if target_hw.tier_family is None:
+        return None
+    candidate_keys = [model_key]
+    alias = MODELS.get(model_key, {}).get("measurement_alias")
+    if alias and alias != model_key:
+        candidate_keys.append(alias)
+    for tier in TIERS.values():
+        if tier.tier_family != target_hw.tier_family:
+            continue
+        decode_map = tier.measured_decode_overrides or {}
+        for k in candidate_keys:
+            if k in decode_map:
+                prefill_map = tier.measured_prefill_overrides or {}
+                return (tier, decode_map[k], prefill_map.get(k))
+    return None
+
+
 # ───────────────────────── Invariant assertions ─────────────────────────
 
 def _assert_invariants():
@@ -920,6 +1102,72 @@ def _assert_invariants():
     for k, m in MODELS.items():
         for f in ("active_params", "bytes_per_param", "total_params"):
             assert f in m, f"MODELS[{k}] missing {f}"
+    # Phase 2 schema invariants — every tier needs tier_family +
+    # compute_util_factor (defaults are fine; this asserts they're set
+    # to something non-None / non-zero so silent-fallthrough bugs
+    # surface at import).
+    for tier in TIERS.values():
+        assert tier.tier_family is not None, (
+            f"Hardware {tier.name!r} missing tier_family — Phase 2 same-"
+            f"class anchor lookup needs this. Set to a string like "
+            f"'LP5X-8.4-128b' per the [backend] 13:07 taxonomy."
+        )
+        assert tier.compute_util_factor > 0, (
+            f"Hardware {tier.name!r} has compute_util_factor={tier.compute_util_factor}; "
+            f"Phase 2 cross-class compute floor would divide-by-zero. "
+            f"Per [backend] 12:38 calibration table: Neutron 0.19 / "
+            f"Mid 0.45 / High 0.50 / 5090 0.85."
+        )
+
+
+def _assert_phase2_anchors():
+    """Validate the [backend] 12:38 anchor list against Phase 2 projection
+    output. Fail-loud if the anchor numbers drift — catches silent
+    regressions in the override mechanism, BW-scaling math, or the
+    tier_family taxonomy. Skip when the bundle isn't loaded yet (which
+    is the case during pure-import without sizer.measured)."""
+    if not RTX_5090_REFERENCE.measured_llm:
+        return  # bundle not loaded yet; can't validate anchors
+    # Anchor #5: Mid + Skippy MoE Q4 stock @ 1K prompt → 37.85 tok/s, 351 ms TTFT
+    r5 = project_llm("qwen3-30b-a3b-q4-moe", NPU_MID, "short_chat",
+                      prompt_tokens=1000, decode_tokens=200)
+    assert abs(r5["decode_tok_s"] - 37.85) < 0.01, (
+        f"Anchor #5 drift: Mid stock + MoE Q4 expected 37.85 tok/s, got "
+        f"{r5['decode_tok_s']}. Source classification: {r5['source']!r}."
+    )
+    assert r5["source"] == "measured_anchor", (
+        f"Anchor #5 mis-classified: expected measured_anchor (target IS "
+        f"the anchor tier), got {r5['source']!r}."
+    )
+    # Anchor #6: Mid + LPDDR6-14 + MoE Q4 → 63.08 tok/s, TTFT held at stock
+    mid_lpddr6_14 = hw_with_memory(NPU_MID, "LPDDR6", 14.0,
+                                     name_suffix="LPDDR6-14")
+    r6 = project_llm("qwen3-30b-a3b-q4-moe", mid_lpddr6_14, "short_chat",
+                      prompt_tokens=1000, decode_tokens=200)
+    assert abs(r6["decode_tok_s"] - 63.08) < 0.01, (
+        f"Anchor #6 drift: Mid + LPDDR6-14 + MoE Q4 expected 63.08 tok/s, "
+        f"got {r6['decode_tok_s']}."
+    )
+    assert r6["source"] == "same_class_anchor", (
+        f"Anchor #6 mis-classified: expected same_class_anchor (LPDDR6 "
+        f"overlay, BW-scaled within family), got {r6['source']!r}."
+    )
+    # High stock + MoE → 🟡 same_class via Mid anchor (BW-equal, same family)
+    r_high = project_llm("qwen3-30b-a3b-q4-moe", NPU_HIGH, "short_chat",
+                          prompt_tokens=1000, decode_tokens=200)
+    assert abs(r_high["decode_tok_s"] - 37.85) < 0.01, (
+        f"High stock + MoE expected 37.85 tok/s (BW-equal to Mid in "
+        f"same family), got {r_high['decode_tok_s']}."
+    )
+    assert r_high["source"] == "same_class_anchor", (
+        f"High stock + MoE mis-classified: expected same_class_anchor "
+        f"(via Mid anchor in shared LP5X-8.4-128b family), got "
+        f"{r_high['source']!r}."
+    )
 
 
 _assert_invariants()
+# Phase 2 anchor validation runs at import once `measured.py` has populated
+# RTX_5090_REFERENCE.measured_llm. measured.py imports npu_model at the
+# top, so this assertion fires on the second pass when measured.attach()
+# completes — see measured.py end of module.
