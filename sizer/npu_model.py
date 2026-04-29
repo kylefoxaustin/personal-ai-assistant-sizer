@@ -55,10 +55,26 @@ class Hardware:
     # compute-bound, not BW-bound, so a memory-only swap shouldn't move it)
     # while still letting decode tok/s scale up with the upgraded BW.
     stock_mem_bandwidth_gbs: float | None = None
+    # Snapshot of the stock tier name (e.g. "NPU Mid") captured by
+    # `hw_with_memory()`. Used by silicon-intrinsic lookups (precision
+    # capability, deployment path) which key off the stock name — a
+    # memory-only swap doesn't change tensor-core support, dtype
+    # capability, or the retargeting cost class. Display strings still
+    # use `name` so the variant suffix surfaces in headings.
+    stock_name: str | None = None
 
     @property
     def effective_bandwidth_gbs(self) -> float:
         return self.mem_bandwidth_gbs * self.bandwidth_efficiency
+
+    @property
+    def tier_lookup_name(self) -> str:
+        """Stock tier name for silicon-intrinsic lookups (precision
+        capability, deployment path). Memory-only upgrades inherit silicon
+        caps from the stock tier — `hw_with_memory()` rewrites `name` to
+        surface the variant in display strings, but precision / dtype
+        capabilities don't change."""
+        return self.stock_name if self.stock_name is not None else self.name
 
     def effective_tops(self, dtype: str) -> float:
         peak = {
@@ -232,6 +248,7 @@ def hw_with_memory(hw: Hardware, mem_type: str, mem_data_rate_gtps: float,
         mem_bandwidth_gbs=new_bw,
         bw_projected=True,
         stock_mem_bandwidth_gbs=hw.mem_bandwidth_gbs,
+        stock_name=hw.name,
     )
 
 

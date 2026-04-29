@@ -468,7 +468,7 @@ st.caption(
     f"amber = small but real; red = meaningful regression."
 )
 
-_cap = tier_precision_capability(hw.name)
+_cap = tier_precision_capability(hw.tier_lookup_name)
 # Present 4 precision columns: bf16/fp16, FP8, INT8, Q4_K_M
 _precision_columns = [
     ("bf16/fp16", "fp16",  "fp16/bf16"),
@@ -601,7 +601,7 @@ with st.container():
 
 # Figure out which retargeting path this tier needs for Skippy's current model
 _skippy_model_dtype = MODELS[model_key].get("compute_dtype", "fp16")
-_path_key = deployment_path_for_tier(hw.name, _skippy_model_dtype)
+_path_key = deployment_path_for_tier(hw.tier_lookup_name, _skippy_model_dtype)
 _cost = RETARGETING_COSTS[_path_key]
 _cost_color = retargeting_cost_color(_path_key)
 
