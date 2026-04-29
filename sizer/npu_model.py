@@ -80,6 +80,21 @@ class Hardware:
     # anchors fit better.
     compute_overhead_ms: float = 1.0
 
+    # Default fraction of memory bandwidth available to the NPU at the
+    # tier's typical system-load condition. Per [docs] 2026-04-29 14:38
+    # spec: NPU_share is a third orthogonal factor composing with
+    # peak_DRAM_BW and kernel_util_factor —
+    #   effective_NPU_BW = peak_DRAM_BW × NPU_share × bandwidth_efficiency
+    # On SoC NPUs the memory bus is shared with display/camera/audio/
+    # CPU — typical utilization sees 75% available; idle sees 100%;
+    # heavy concurrent load sees 25-50%. RTX 5090 has dedicated VRAM
+    # (no shared bus contention) so default 100%.
+    # User-overridable via project_llm(npu_share=...) and the sidebar
+    # "BW available to NPU" selector. Source classification stays
+    # 🟢 measured_anchor at 100% (the original measurement condition);
+    # at other shares the cell becomes a what-if scaling.
+    npu_share_default: float = 0.75
+
     # Measured LLM decode tok/s + TTFT per (model_key, workload_id). When
     # populated, project_llm returns these directly for matching cells —
     # bypassing the BW projection. Mirrors keyhole's `measured_llm_*` pattern
@@ -317,10 +332,12 @@ RTX_5090_REFERENCE = Hardware(
     compute_efficiency=0.70, bandwidth_efficiency=0.85,
     tdp_watts=575.0,
     # Datacenter-class memory controller + huge L2 — own family. All
-    # measured Skippy bake-off cells live on this tier.
+    # measured Skippy bake-off cells live on this tier. Dedicated VRAM
+    # means no shared-bus contention; default NPU_share = 100%.
     tier_family="GDDR7-28",
     compute_util_factor=0.85,
     compute_overhead_ms=0.3,
+    npu_share_default=1.0,
 )
 
 
@@ -622,6 +639,7 @@ RUNTIME_OVERHEAD_BYTES = 1_000_000_000
 def project_what_if_decode_tok_s(
     active_params: int, bytes_per_param: float, is_moe: bool,
     hw: "Hardware", ctx_tokens: int, compiler_quality: float = 1.0,
+    npu_share: float | None = None,
 ) -> dict:
     """Project decode tok/s for a hypothetical model.
 
@@ -640,7 +658,8 @@ def project_what_if_decode_tok_s(
     # Get the anchor's interpolated decode tok/s at the same context length
     # on the same tier (this already handles BW scaling and compiler_quality)
     anchor_result = decode_tok_s_at_context(
-        anchor_model_key, hw, ctx_tokens, compiler_quality=compiler_quality
+        anchor_model_key, hw, ctx_tokens, compiler_quality=compiler_quality,
+        npu_share=npu_share,
     )
     anchor_tok_s = anchor_result["decode_tok_s"]
 
@@ -652,6 +671,7 @@ def project_what_if_decode_tok_s(
     current_skippy = decode_tok_s_at_context(
         "qwen3-30b-a3b-q4-moe", hw, ctx_tokens,
         compiler_quality=compiler_quality,
+        npu_share=npu_share,
     )
 
     return {
@@ -749,7 +769,8 @@ def _log_linear_interpolate(anchors: list[tuple[int, float]],
 
 def decode_tok_s_at_context(model_key: str, hw: Hardware,
                              ctx_tokens: int,
-                             compiler_quality: float = 1.0) -> dict:
+                             compiler_quality: float = 1.0,
+                             npu_share: float | None = None) -> dict:
     """Predict decode tok/s at arbitrary context length for (model, hw).
 
     Phase 2 (post 2026-04-29 Plan-C): same anchor-resolution shape as
@@ -766,6 +787,9 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
     # Lazy import to avoid circular dependency with measured.py
     from .measured import calibration_anchors
 
+    effective_npu_share = (npu_share if npu_share is not None
+                            else hw.npu_share_default)
+
     # 1) RTX 5090 reference: log-linear interpolate from per-workload
     # bake-off cells (preserves the prompt-length shape we measured).
     if hw.name == RTX_5090_REFERENCE.name:
@@ -774,6 +798,9 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
             raise ValueError(f"no calibration data for {model_key}")
         anchors = [(a[0], a[1]) for a in anchors_full]
         tok_s, interp_source = _log_linear_interpolate(anchors, ctx_tokens)
+        # NPU_share scaling on the measured cell (rare for 5090 since
+        # default is 1.0, but user can pick lower as a what-if).
+        tok_s = tok_s * (effective_npu_share / hw.npu_share_default)
         return {
             "decode_tok_s": tok_s,
             "source": "measured",
@@ -789,7 +816,10 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
     if anchor is not None:
         anchor_tier, decode_anchor, _prefill_anchor = anchor
         bw_ratio_within_family = hw.mem_bandwidth_gbs / anchor_tier.mem_bandwidth_gbs
-        tok_s = decode_anchor * bw_ratio_within_family * compiler_quality
+        # Anchor was measured at full NPU access (npu_share=1.0). Scale
+        # by user's effective_npu_share.
+        tok_s = (decode_anchor * bw_ratio_within_family
+                  * effective_npu_share * compiler_quality)
         is_direct = (
             hw.tier_lookup_name == anchor_tier.name and not hw.bw_projected
         )
@@ -812,7 +842,8 @@ def decode_tok_s_at_context(model_key: str, hw: Hardware,
     required_dtype = model_meta.get("compute_dtype", "fp16")
     eff_tops = hw.effective_tops(required_dtype)
     decode_bw_realized = (hw.effective_bandwidth_gbs
-                           * hw.llm_decode_bw_realization)
+                           * hw.llm_decode_bw_realization
+                           * effective_npu_share)
     bw_floor_ms = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
     compute_floor_ms = gops_per_token / max(
         eff_tops * hw.llm_prefill_util_factor, 1e-9
@@ -901,6 +932,7 @@ def project_llm(
     decode_tokens: int = 200,
     host_ms: float = 0.0,
     compiler_quality: float = 1.0,
+    npu_share: float | None = None,
 ) -> dict:
     """Project LLM decode tok/s + TTFT for (model, hw, workload).
 
@@ -985,11 +1017,25 @@ def project_llm(
     # [backend] 12:38; matches the GPT-style transformer FLOP estimate).
     gops_per_token = (2 * model_meta["active_params"]) / 1e9
     eff_tops = hw.effective_tops(required_dtype)
+    # Effective NPU_share (per [docs] 2026-04-29 14:38 spec): fraction of
+    # peak DRAM BW available to the NPU. Falls back to tier default
+    # (5090=1.0, NPU tiers=0.75 typical SoC contention). Affects DECODE
+    # tok/s only — decode is BW-bound on MoE active-param weight stream.
+    # Prefill / TTFT compute is TOPS-gated and doesn't share the memory
+    # bus, so npu_share does NOT scale prefill / TTFT in any path.
+    effective_npu_share = (npu_share if npu_share is not None
+                            else hw.npu_share_default)
 
     # 1) Per-cell measured wins (RTX 5090 cells live here).
     m = hw.get_measured(model_key, workload_id)
     source = "measured"
     regime = "bw_bound"  # MoE decode is BW-bound by physics; refine below
+    # Per-cell measurements were taken at the tier's nominal NPU_share
+    # (5090=1.0). User-selected non-default shares are what-ifs that
+    # scale decode tok/s linearly.
+    if m is not None and effective_npu_share != hw.npu_share_default:
+        m = dict(m)  # copy — don't mutate the cached cell
+        m["decode_tok_s"] = m["decode_tok_s"] * (effective_npu_share / hw.npu_share_default)
 
     if m is None:
         # Resolve same-family anchor (also catches the on-tier anchor
@@ -1010,7 +1056,10 @@ def project_llm(
             bw_ratio_within_family = (
                 hw.mem_bandwidth_gbs / anchor_tier.mem_bandwidth_gbs
             )
-            decode_tok_s = decode_anchor * bw_ratio_within_family * compiler_quality
+            # NPU_share: anchor was measured at full NPU access (npu_share=1.0
+            # typical for the bake-off conditions). Scale by effective_npu_share.
+            decode_tok_s = (decode_anchor * bw_ratio_within_family
+                              * effective_npu_share * compiler_quality)
             # Prefill: held at anchor's stock value (compute-bound, not
             # BW-bound, so memory swap doesn't move it). If anchor doesn't
             # carry a prefill rate, project from 5090 (5090 cell will give
@@ -1066,8 +1115,14 @@ def project_llm(
             # for the BW floor. Both default to safe values (0.10 / 1.0)
             # for unmeasured tier-class × model-class cells; populated to
             # measured calibration on Mid/High via [backend] 13:17 spec.
+            # NPU_share scales the decode BW floor only (not the compute
+            # floor) per [docs] 14:38 spec. MAX(scaled_bw_floor, compute_
+            # floor) naturally handles regime: if decode is compute-bound
+            # at small npu_share, scaling BW further doesn't move the
+            # floor.
             decode_bw_realized = (hw.effective_bandwidth_gbs
-                                   * hw.llm_decode_bw_realization)
+                                   * hw.llm_decode_bw_realization
+                                   * effective_npu_share)
             bw_floor_ms_decode = (active_params_gb / max(decode_bw_realized, 1e-9)) * 1000.0
             compute_floor_ms_decode = gops_per_token / max(
                 eff_tops * hw.llm_prefill_util_factor, 1e-9
@@ -1184,12 +1239,15 @@ def _assert_phase2_anchors():
     is the case during pure-import without sizer.measured)."""
     if not RTX_5090_REFERENCE.measured_llm:
         return  # bundle not loaded yet; can't validate anchors
+    # Anchors must be validated at npu_share=1.0 (the measurement was
+    # taken at full NPU access; default 75% is a what-if scaling).
     # Anchor #5: Mid + Skippy MoE Q4 stock @ 1K prompt → 37.85 tok/s, 351 ms TTFT
     r5 = project_llm("qwen3-30b-a3b-q4-moe", NPU_MID, "short_chat",
-                      prompt_tokens=1000, decode_tokens=200)
+                      prompt_tokens=1000, decode_tokens=200,
+                      npu_share=1.0)
     assert abs(r5["decode_tok_s"] - 37.85) < 0.01, (
-        f"Anchor #5 drift: Mid stock + MoE Q4 expected 37.85 tok/s, got "
-        f"{r5['decode_tok_s']}. Source classification: {r5['source']!r}."
+        f"Anchor #5 drift: Mid stock + MoE Q4 @ npu_share=1.0 expected "
+        f"37.85 tok/s, got {r5['decode_tok_s']}. Source: {r5['source']!r}."
     )
     assert r5["source"] == "measured_anchor", (
         f"Anchor #5 mis-classified: expected measured_anchor (target IS "
@@ -1199,10 +1257,11 @@ def _assert_phase2_anchors():
     mid_lpddr6_14 = hw_with_memory(NPU_MID, "LPDDR6", 14.0,
                                      name_suffix="LPDDR6-14")
     r6 = project_llm("qwen3-30b-a3b-q4-moe", mid_lpddr6_14, "short_chat",
-                      prompt_tokens=1000, decode_tokens=200)
+                      prompt_tokens=1000, decode_tokens=200,
+                      npu_share=1.0)
     assert abs(r6["decode_tok_s"] - 63.08) < 0.01, (
-        f"Anchor #6 drift: Mid + LPDDR6-14 + MoE Q4 expected 63.08 tok/s, "
-        f"got {r6['decode_tok_s']}."
+        f"Anchor #6 drift: Mid + LPDDR6-14 + MoE Q4 @ npu_share=1.0 "
+        f"expected 63.08 tok/s, got {r6['decode_tok_s']}."
     )
     assert r6["source"] == "same_class_anchor", (
         f"Anchor #6 mis-classified: expected same_class_anchor (LPDDR6 "
@@ -1210,15 +1269,26 @@ def _assert_phase2_anchors():
     )
     # High stock + MoE → 🟡 same_class via Mid anchor (BW-equal, same family)
     r_high = project_llm("qwen3-30b-a3b-q4-moe", NPU_HIGH, "short_chat",
-                          prompt_tokens=1000, decode_tokens=200)
+                          prompt_tokens=1000, decode_tokens=200,
+                          npu_share=1.0)
     assert abs(r_high["decode_tok_s"] - 37.85) < 0.01, (
-        f"High stock + MoE expected 37.85 tok/s (BW-equal to Mid in "
-        f"same family), got {r_high['decode_tok_s']}."
+        f"High stock + MoE @ npu_share=1.0 expected 37.85 tok/s (BW-equal "
+        f"to Mid in same family), got {r_high['decode_tok_s']}."
     )
     assert r_high["source"] == "same_class_anchor", (
         f"High stock + MoE mis-classified: expected same_class_anchor "
         f"(via Mid anchor in shared LP5X-8.4-128b family), got "
         f"{r_high['source']!r}."
+    )
+    # NPU_share scaling: at default 75%, Mid + MoE should show 28.39 tok/s
+    # (37.85 × 0.75). Validates the new factor composes correctly.
+    r5_default = project_llm("qwen3-30b-a3b-q4-moe", NPU_MID, "short_chat",
+                              prompt_tokens=1000, decode_tokens=200)
+    expected_at_75 = 37.85 * 0.75
+    assert abs(r5_default["decode_tok_s"] - expected_at_75) < 0.05, (
+        f"NPU_share scaling broken: Mid + MoE Q4 at default npu_share "
+        f"(0.75) expected {expected_at_75:.2f} tok/s (37.85 × 0.75), "
+        f"got {r5_default['decode_tok_s']}."
     )
 
 

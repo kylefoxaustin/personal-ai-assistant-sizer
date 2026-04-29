@@ -252,6 +252,42 @@ with st.sidebar:
                 f"at stock (prefill is compute-bound)."
             )
 
+    # NPU memory-share selector — third orthogonal factor in the
+    # bandwidth-decomposition (peak_DRAM_BW × NPU_share × kernel_util).
+    # Per [docs] 2026-04-29 14:38 spec. NPU tiers default 75% (typical
+    # SoC contention; display + camera + audio + CPU share the bus);
+    # 5090 default 100% (dedicated VRAM). Affects DECODE only — TTFT is
+    # compute-bound and doesn't gate on the memory bus.
+    _share_options = [
+        (1.00, "100% — Idle SoC, NPU has full memory bus"),
+        (0.75, "75% — Light system load (default for NPU tiers)"),
+        (0.50, "50% — Moderate contention (display + camera + audio)"),
+        (0.25, "25% — Heavy contention (NPU starved)"),
+    ]
+    # Pick the default index matching the tier's npu_share_default.
+    _default_idx = 0
+    for _i, (_v, _) in enumerate(_share_options):
+        if abs(_v - hw.npu_share_default) < 1e-6:
+            _default_idx = _i
+            break
+    _share_choice = st.selectbox(
+        "BW available to NPU",
+        options=[opt[1] for opt in _share_options],
+        index=_default_idx,
+        key=f"k_npu_share_{tier_name}",
+        help=(
+            "Fraction of peak memory bandwidth available to the NPU. On "
+            "SoCs the bus is shared with display / camera / audio / CPU; "
+            "typical system load sees ~75% available. Affects decode "
+            "tok/s linearly (BW-bound regime). TTFT and prefill are "
+            "compute-bound — they don't gate on the memory bus, so this "
+            "selector doesn't move them. The original Skippy bake-off "
+            "anchor was measured at 100% (idle SoC); other settings are "
+            "what-if scalings of that anchor."
+        ),
+    )
+    npu_share = next(v for v, lbl in _share_options if lbl == _share_choice)
+
     # One-liner description below the selectbox — matches keyhole-sizer's
     # describe_hw() caption pattern so users see silicon specs inline.
     st.caption(describe_hw(hw))
@@ -378,6 +414,7 @@ try:
         prompt_tokens=prompt_tokens,
         decode_tokens=decode_tokens,
         compiler_quality=compiler_quality,
+        npu_share=npu_share,
     )
     err = None
 except ValueError as e:
@@ -497,6 +534,12 @@ else:
 # kernel-engineer audience that wants the underlying compute rate.
 _bw_proj = getattr(hw, "bw_projected", False)
 _proj_suffix = " (BW-proj)" if _bw_proj else ""
+# NPU_share marker: append "(@ X%)" when the user has scaled away from
+# 100% (the Skippy bake-off measurement condition). Per [docs] 14:38
+# spec: 100% reflects the original measurement; other shares are
+# what-if scalings. Applies to BW-affected tiles (Decode tok/s, E2E
+# latency, Decode duration) — TTFT is compute-bound and doesn't move.
+_share_marker = "" if abs(npu_share - 1.0) < 1e-6 else f" (@ {int(npu_share*100)}% NPU)"
 _proj_help = (
     "\n\n**BW-proj**: scaled from the RTX 5090 reference by the upgraded "
     "peak-BW ratio (active-param weights are BW-bound on MoE). TTFT held "
@@ -524,12 +567,12 @@ else:
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(
-    f"Decode tok/s{_proj_suffix}",
+    f"Decode tok/s{_proj_suffix}{_share_marker}",
     f"{r['decode_tok_s']:.1f}",
     help=(
         "Sustained generation rate on this workload. Bandwidth-bound "
         "regime — active-param weights stream through DRAM per decoded "
-        "token, so tok/s scales with effective BW." + _proj_help
+        "token, so tok/s scales with effective BW × NPU_share." + _proj_help
     ),
 )
 c2.metric(
@@ -540,25 +583,29 @@ c2.metric(
         f"to first generated token. Host overhead + prefill compute. "
         f"Underlying prefill rate: **{r['prefill_tok_s']:.0f} tok/s**. "
         "Compute-bound (TOPS, not BW), so a memory-only swap doesn't "
-        "move it — held at stock under any LPDDR5T / LPDDR6 upgrade."
+        "move it — held at stock under any LPDDR5T / LPDDR6 upgrade. "
+        "NPU_share also doesn't affect TTFT (the memory bus isn't the "
+        "bottleneck for prefill compute)."
     ),
 )
 c3.metric(
-    f"End-to-end latency{_proj_suffix}",
+    f"End-to-end latency{_proj_suffix}{_share_marker}",
     f"{r['total_s']:.2f} s",
     help=(
         "Total wall-clock latency: host overhead + prefill + decode. "
-        "Decode portion shrinks under a memory upgrade (BW-bound); "
-        "TTFT is unaffected (compute-bound)." + _proj_help
+        "Decode portion shrinks under a memory upgrade or grows when "
+        "NPU_share drops (both BW-bound effects); TTFT is unaffected "
+        "(compute-bound)." + _proj_help
     ),
 )
 c4.metric(
-    f"Decode duration{_proj_suffix}",
+    f"Decode duration{_proj_suffix}{_share_marker}",
     f"{r['decode_s']:.2f} s",
     help=(
         f"Wall-clock time spent generating decode tokens "
         f"(decode_tokens / decode_tok_s). Scales inversely with the "
-        f"decode rate." + _proj_help
+        f"decode rate (which itself scales with effective BW × NPU_share)."
+        + _proj_help
     ),
 )
 
@@ -1175,7 +1222,8 @@ for mk in MODELS.keys():
     xs_out, ys_out = [], []
     for ctx in _CTX_GRID:
         r = decode_tok_s_at_context(mk, hw, ctx,
-                                     compiler_quality=compiler_quality)
+                                     compiler_quality=compiler_quality,
+                                     npu_share=npu_share)
         if ctx <= max_measured:
             xs_in.append(ctx)
             ys_in.append(r["decode_tok_s"])
@@ -1183,7 +1231,8 @@ for mk in MODELS.keys():
             if not xs_out:  # start the dashed line at the last measured pt
                 xs_out.append(max_measured)
                 last_r = decode_tok_s_at_context(mk, hw, max_measured,
-                                                  compiler_quality=compiler_quality)
+                                                  compiler_quality=compiler_quality,
+                                                  npu_share=npu_share)
                 ys_out.append(last_r["decode_tok_s"])
             xs_out.append(ctx)
             ys_out.append(r["decode_tok_s"])
@@ -1213,7 +1262,8 @@ for mk in MODELS.keys():
     ax_labels = []
     for pt, ts_5090, wl in anchors:
         r = decode_tok_s_at_context(mk, hw, pt,
-                                     compiler_quality=compiler_quality)
+                                     compiler_quality=compiler_quality,
+                                     npu_share=npu_share)
         ax_ys.append(r["decode_tok_s"])
         ax_labels.append(wl)
     _curve_fig.add_trace(go.Scatter(
@@ -1269,6 +1319,7 @@ if st.session_state.get("k_whatif_enable"):
         hw=hw,
         ctx_tokens=prompt_tokens,
         compiler_quality=compiler_quality,
+        npu_share=npu_share,
     )
     # Memory feasibility at prompt+decode total context
     _wm = what_if_memory_feasibility(
@@ -1453,6 +1504,7 @@ for stock_tname, stock_thw in TIERS.items():
             prompt_tokens=prompt_tokens,
             decode_tokens=decode_tokens,
             compiler_quality=compiler_quality,
+            npu_share=npu_share,
         )
         if rr["source"] == "wont_fit":
             f = rr["feasibility"]
@@ -1529,6 +1581,7 @@ for mk in MODELS:
             prompt_tokens=prompt_tokens,
             decode_tokens=decode_tokens,
             compiler_quality=compiler_quality,
+            npu_share=npu_share,
         )
         if rr["source"] == "wont_fit":
             rows2.append({
