@@ -1300,11 +1300,37 @@ st.markdown("---")
 
 # Cross-tier comparison table
 st.subheader("Cross-tier comparison")
-st.caption(f"All tiers projected from RTX 5090's measured baseline for "
-           f"**{MODELS[model_key]['display_name']}** at **{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
-           "Lower tier → more bandwidth-bound → slower decode.")
+st.caption(
+    f"All tiers projected from RTX 5090's measured baseline for "
+    f"**{MODELS[model_key]['display_name']}** at "
+    f"**{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
+    "Lower tier → more bandwidth-bound → slower decode. "
+    "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
+    "(uniform `bandwidth_efficiency` across tiers). "
+    "Src: 🟢 measured · 🟡 BW-projected · ⚡ memory-upgrade variant "
+    "(decode BW-scaled, TTFT held at stock) · 🔴 won't fit / dtype "
+    "mismatch · ⚠️ tight memory headroom."
+)
 rows = []
-for tname, thw in TIERS.items():
+for stock_tname, stock_thw in TIERS.items():
+    # If the user has toggled an LPDDR6 memory upgrade, swap the
+    # upgraded variant in for THAT tier's row only — surfaces the
+    # upgraded BW / DDR type / decode tok/s and tags the Tier label
+    # with the variant suffix (e.g. "NPU Mid (LPDDR6-12)"). Other
+    # rows stay at their stock memory.
+    if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
+        tname, thw = hw.name, hw
+    else:
+        tname, thw = stock_tname, stock_thw
+
+    # DDR type + Total/Usable BW columns — pull straight from Hardware
+    # fields. Compact format to keep the table from widening:
+    # "128b LPDDR5X @ 8.4 GT/s" / "134.4 / 94.1"
+    ddr_type = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
+                f"{thw.mem_data_rate_gtps:g} GT/s")
+    bw_str = (f"{thw.mem_bandwidth_gbs:.1f} / "
+              f"{thw.effective_bandwidth_gbs:.1f}")
+
     try:
         rr = project_llm(
             model_key, thw, workload_id,
@@ -1315,48 +1341,55 @@ for tname, thw in TIERS.items():
         if rr["source"] == "wont_fit":
             f = rr["feasibility"]
             rows.append({
-                "Tier": tname,
-                "Source": "🔴 won't fit",
-                "Decode tok/s": "—",
-                "Prefill tok/s": "—",
-                "Total (s)": "—",
-                "Host (ms)": f"needs {f['required_gb']} GB (has {f['available_gb']})",
+                "Tier": tname, "Src": "🔴",
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                "Host": f"won't fit · needs {f['required_gb']} GB "
+                        f"(has {f['available_gb']})",
             })
             continue
         if rr["source"] == "dtype_mismatch":
             d = rr["dtype_detail"]
             rows.append({
-                "Tier": tname,
-                "Source": "🔴 dtype mismatch",
-                "Decode tok/s": "—",
-                "Prefill tok/s": "—",
-                "Total (s)": "—",
-                "Host (ms)": f"needs {d['model_needs']} (has {'/'.join(d['hw_supports'])})",
+                "Tier": tname, "Src": "🔴",
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                "Host": (f"dtype · needs {d['model_needs']} "
+                         f"(has {'/'.join(d['hw_supports'])})"),
             })
             continue
-        tight_note = " ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""
+        # Pick Src icon: ⚡ for memory-upgrade variant (its row uses the
+        # cloned hw, which carries bw_projected=True); else 🟢/🟡 by
+        # measured-vs-projected. Append ⚠️ for tight memory headroom.
+        if getattr(thw, "bw_projected", False):
+            src_icon = "⚡"
+        else:
+            src_icon = "🟢" if rr["source"] == "measured" else "🟡"
+        if rr["feasibility"]["verdict"] == "tight":
+            src_icon = src_icon + "⚠️"
         rows.append({
-            "Tier": tname,
-            "Source": ("🟢 measured" if rr["source"] == "measured"
-                       else "🟡 projected") + tight_note,
+            "Tier": tname, "Src": src_icon,
+            "DDR type": ddr_type, "Total/Usable BW": bw_str,
             # Stringify all numeric values: the wont_fit / dtype_mismatch
             # branches above use "—" sentinels which collide with floats
             # under pandas object-dtype + pyarrow serialization (Streamlit
             # 1.56's st.dataframe → pa.Table.from_pandas raises
             # ArrowTypeError 'Expected bytes, got a float object').
-            "Decode tok/s":  f"{rr['decode_tok_s']:.1f}",
-            "Prefill tok/s": f"{round(rr['prefill_tok_s'])}",
-            "Total (s)":     f"{rr['total_s']:.2f}",
-            "Host (ms)":     (f"{rr['host_ms']:.0f}" if isinstance(rr['host_ms'], (int, float))
-                              else str(rr['host_ms'])),
+            "Decode":   f"{rr['decode_tok_s']:.1f}",
+            "Prefill":  f"{round(rr['prefill_tok_s'])}",
+            "Total (s)": f"{rr['total_s']:.2f}",
+            "Host":     (f"{rr['host_ms']:.0f}"
+                         if isinstance(rr['host_ms'], (int, float))
+                         else str(rr['host_ms'])),
         })
     except ValueError:
         # Pad missing columns with "—" so pandas doesn't fill them with
         # NaN (float) — same mixed-type-collision risk.
         rows.append({
-            "Tier": tname, "Source": "⚪ no data",
-            "Decode tok/s": "—", "Prefill tok/s": "—",
-            "Total (s)": "—", "Host (ms)": "—",
+            "Tier": tname, "Src": "⚪",
+            "DDR type": ddr_type, "Total/Usable BW": bw_str,
+            "Decode": "—", "Prefill": "—",
+            "Total (s)": "—", "Host": "—",
         })
 df = pd.DataFrame(rows)
 st.dataframe(df, width="stretch", hide_index=True)
