@@ -436,26 +436,76 @@ else:
             f"{feas_note}")
 
 # Top-line numeric metrics
+# Per [docs] 2026-04-29 11:01 spec: TTFT (the latency users feel) replaces
+# the prefill-rate tile. End-to-end + decode duration get clearer labels.
+# Prefill rate stays accessible via the TTFT tile's hover-help for the
+# kernel-engineer audience that wants the underlying compute rate.
+_bw_proj = getattr(hw, "bw_projected", False)
+_proj_suffix = " (BW-proj)" if _bw_proj else ""
+_proj_help = (
+    "\n\n**BW-proj**: scaled from the RTX 5090 reference by the upgraded "
+    "peak-BW ratio (active-param weights are BW-bound on MoE). TTFT held "
+    "at stock — prefill is compute-bound. Memory swap is what-if; not a "
+    "vendor measurement of LPDDR6 silicon."
+) if _bw_proj else ""
+
+# TTFT = total - decode = host overhead + prefill compute time.
+# Internally consistent with the End-to-end / Decode-duration tiles
+# (same accounting). Held at stock under memory upgrade because
+# project_llm uses stock_mem_bandwidth_gbs for prefill scaling when
+# bw_projected=True — prefill is compute-bound, not BW-bound.
+_ttft_s = max(r['total_s'] - r['decode_s'], 0.0)
+# Format-by-magnitude: integer ms below 100 ms (where ms precision
+# matters for sub-100-ms TTFTs), 2-decimal seconds above. Using
+# 2-decimal seconds for the 100ms-1s range avoids a "904 ms vs 903 ms"
+# 1ms display flicker between stock and memory-upgraded variants
+# caused by project_llm rounding total_s and decode_s independently
+# before we subtract them — the underlying TTFT is held exactly, but
+# the rounded difference can drift by a millisecond.
+if _ttft_s < 0.1:
+    _ttft_value = f"{_ttft_s*1000:.0f} ms"
+else:
+    _ttft_value = f"{_ttft_s:.2f} s"
+
 c1, c2, c3, c4 = st.columns(4)
-# Flip the decode tile label to mark it as BW-projected when the user
-# toggled an LPDDR6 memory upgrade — `hw_with_memory()` BW-scaled the
-# decode tok/s rather than reading a vendor measurement of LPDDR6 silicon.
-# Mirrors keyhole-sizer commit ecc3ba8.
-_decode_label = "Decode tok/s"
-_decode_help = None
-if getattr(hw, "bw_projected", False):
-    _decode_label = "Decode tok/s (BW-proj)"
-    _decode_help = (
-        "BW-projected: decode tok/s scaled from the RTX 5090 reference "
-        "by the upgraded peak-BW ratio (active-param weights are BW-bound "
-        "on MoE — bytes-per-token streamed from DRAM scales linearly with "
-        "BW). TTFT held at stock — prefill is compute-bound. Memory swap "
-        "is what-if; not a vendor measurement of LPDDR6 silicon."
-    )
-c1.metric(_decode_label, f"{r['decode_tok_s']:.1f}", help=_decode_help)
-c2.metric("Prefill tok/s", f"{r['prefill_tok_s']:.0f}")
-c3.metric("Total latency", f"{r['total_s']:.2f} s")
-c4.metric("Decode portion", f"{r['decode_s']:.2f} s")
+c1.metric(
+    f"Decode tok/s{_proj_suffix}",
+    f"{r['decode_tok_s']:.1f}",
+    help=(
+        "Sustained generation rate on this workload. Bandwidth-bound "
+        "regime — active-param weights stream through DRAM per decoded "
+        "token, so tok/s scales with effective BW." + _proj_help
+    ),
+)
+c2.metric(
+    "TTFT",
+    _ttft_value,
+    help=(
+        f"Time to first token — the latency users feel from request "
+        f"to first generated token. Host overhead + prefill compute. "
+        f"Underlying prefill rate: **{r['prefill_tok_s']:.0f} tok/s**. "
+        "Compute-bound (TOPS, not BW), so a memory-only swap doesn't "
+        "move it — held at stock under any LPDDR5T / LPDDR6 upgrade."
+    ),
+)
+c3.metric(
+    f"End-to-end latency{_proj_suffix}",
+    f"{r['total_s']:.2f} s",
+    help=(
+        "Total wall-clock latency: host overhead + prefill + decode. "
+        "Decode portion shrinks under a memory upgrade (BW-bound); "
+        "TTFT is unaffected (compute-bound)." + _proj_help
+    ),
+)
+c4.metric(
+    f"Decode duration{_proj_suffix}",
+    f"{r['decode_s']:.2f} s",
+    help=(
+        f"Wall-clock time spent generating decode tokens "
+        f"(decode_tokens / decode_tok_s). Scales inversely with the "
+        f"decode rate." + _proj_help
+    ),
+)
 
 st.markdown("---")
 
