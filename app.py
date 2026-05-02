@@ -105,7 +105,20 @@ with st.sidebar:
     _selected_model = MODELS[model_key]
     _production_model = MODELS[PRODUCTION_REFERENCE_KEY]
     _is_production = (model_key == PRODUCTION_REFERENCE_KEY)
-    if "pass_rate" in _selected_model:
+    if _selected_model.get("perf_reference_only"):
+        # Perf-comparison reference entries (Qwen 2.5 7B + 32B dense, added
+        # 2026-05-01 per [docs] 20:55). No Skippy v2+RAG eval available —
+        # surface decode-rate framing instead so the silicon-architecture
+        # audience can compare per-token cost vs the production MoE on the
+        # same hardware.
+        st.caption(
+            "**Performance-comparison reference** — no Skippy v2+RAG eval. "
+            "Decode tok/s anchored on RTX 5090 measurement; surfaced for "
+            "the silicon-architecture audience to compare per-token cost "
+            "vs the production model on the same hardware. Will get full "
+            "eval treatment if/when a fine-tune of this base lands."
+        )
+    elif "pass_rate" in _selected_model:
         _delta_pp = (_selected_model["pass_rate"] - _production_model["pass_rate"]) * 100.0
         _delta_sign = "+" if _delta_pp >= 0 else ""
         if _is_production:
@@ -1611,6 +1624,18 @@ for mk in MODELS:
                 "Source": "🔴 dtype mismatch",
             })
             continue
+        # Phase 2 4-state source classification (same scheme as cross-tier
+        # table): 🟢 measured/measured_anchor, 🟡 same_class_anchor,
+        # 🟠 cross_class, ⚠️ tight memory headroom suffix.
+        _src_label_by_class = {
+            "measured":          "🟢 measured",
+            "measured_anchor":   "🟢 measured anchor",
+            "same_class_anchor": "🟡 same-class",
+            "cross_class":       "🟠 cross-class",
+        }
+        _src_label = _src_label_by_class.get(rr["source"], "⚪ unknown")
+        if rr["feasibility"]["verdict"] == "tight":
+            _src_label = _src_label + " ⚠️"
         rows2.append({
             "Model": MODELS[mk]["display_name"],
             "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
@@ -1621,8 +1646,7 @@ for mk in MODELS:
             # sentinels with floats under pandas object dtype).
             "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
             "Total (s)":    f"{rr['total_s']:.2f}",
-            "Source": ("🟢 measured" if rr["source"] == "measured"
-                       else "🟡 projected") + (" ⚠️" if rr["feasibility"]["verdict"] == "tight" else ""),
+            "Source":       _src_label,
         })
     except ValueError:
         # Same column-padding pattern — avoid NaN-vs-string mixing.

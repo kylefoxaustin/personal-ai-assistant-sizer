@@ -66,6 +66,57 @@ def attach_measurements_to_reference() -> dict:
 # Attach at import so anything using the module sees the populated reference.
 _BUNDLE_SUMMARY = attach_measurements_to_reference()
 
+
+def _attach_perf_reference_anchors() -> None:
+    """Append RTX 5090 measurements for the Qwen 2.5 7B + 32B dense
+    perf-reference model entries (added 2026-05-01 per [docs] 20:55 +
+    [backend] 15:43 / 20:08 bake-offs).
+
+    These models weren't in `sizer_bundle.json` because they're new
+    perf-comparison-reference entries (no Skippy v2 prompt-set eval),
+    so we register them post-bundle-attach. Each cell registered under
+    all 5 workloads (rag_qa / short_chat / long_decode / etc) — decode
+    is BW-bound and prompt-invariant on dense models, so the same
+    measurement applies cleanly across workloads.
+
+    Anchor source: `data/output/bakeoff/llm_anchors/` per [backend]
+    15:43 + 20:08. Bake-off shape: RAG 8K prompt + 2K decode @ RTX 5090.
+    """
+    from .npu_model import RTX_5090_REFERENCE
+    # Per-(model, quant) measurements — decode_tok_s and prefill_tok_s
+    # are roughly prompt-invariant on dense Q4/Q5/Q8, so registering the
+    # same point estimate across workloads is honest within ~10%.
+    perf_anchors = {
+        # 7B family
+        "qwen2.5-7b-q4-dense":  {"decode": 183.9, "prefill": 7226.0},
+        "qwen2.5-7b-q5-dense":  {"decode": 170.0, "prefill": 7215.0},
+        "qwen2.5-7b-q8-dense":  {"decode": 137.2, "prefill": 7478.0},
+        # 32B family — no Q8 (won't fit on 5090's 32 GB VRAM with KV+activations)
+        "qwen2.5-32b-q4-dense": {"decode":  52.7, "prefill": 1936.0},
+        "qwen2.5-32b-q5-dense": {"decode":  47.7, "prefill": 1888.0},
+    }
+    workloads = ("short_chat", "rag_qa", "long_decode",
+                  "meeting_summarization", "agentic_roundtrip")
+    measured = RTX_5090_REFERENCE.measured_llm or {}
+    for model_key, anchors in perf_anchors.items():
+        if model_key not in measured:
+            measured[model_key] = {}
+        for wid in workloads:
+            measured[model_key][wid] = {
+                "decode_tok_s":  anchors["decode"],
+                "prefill_tok_s": anchors["prefill"],
+                "ttft_s":        None,  # derived downstream from prompt_tokens / prefill_tok_s
+                "host_ms":       0.0,
+                # Bake-off reference shape — informational
+                "prompt_tokens_p50":     8000,
+                "completion_tokens_p50": 2000,
+            }
+    RTX_5090_REFERENCE.measured_llm = measured
+
+
+_attach_perf_reference_anchors()
+
+
 # Phase 2 anchor validation — once measured_llm is populated, run the
 # [backend] anchor list to catch silent regressions in override math,
 # tier_family taxonomy, or BW-scaling. Fail-loud at import.

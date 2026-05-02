@@ -575,6 +575,122 @@ MODELS: dict[str, dict] = {
             "Wins numerical_precision + refusal; loses rag_datasheet."
         ),
     },
+    # ─────────────────────────────────────────────────────────────────
+    # Performance-comparison reference entries — Qwen 2.5 7B + 32B dense
+    # (per [docs] 2026-05-01 20:55 spec mirroring keyhole-sizer's 7503f0c
+    # / 66edfa2). NOT replacements for the production reference; surfaced
+    # so the silicon-architecture audience can compare decode rate vs
+    # the production MoE on the same hardware.
+    #
+    # No Skippy v2+RAG eval available — perf_reference_only=True flag
+    # signals the UI to skip pass_rate / category_deltas blocks and
+    # surface the "no eval" caption instead. These would only get full
+    # eval treatment after Kyle's planned 7B fine-tune lands and the 32B
+    # fine-tune happens on RunPod later.
+    #
+    # 5090 measurements per [backend] 15:43 + 20:08 bake-offs (RAG 8K+2K):
+    #   7B  Q4_K_M: 183.9 tok/s decode, 7226 prefill (50% BW realization)
+    #   7B  Q5_K_M: 170.0 tok/s decode, 7215 prefill (59%)
+    #   7B  Q8_0:   137.2 tok/s decode, 7478 prefill (68%)
+    #   32B Q4_K_M:  52.7 tok/s decode, 1936 prefill (62%)
+    #   32B Q5_K_M:  47.7 tok/s decode, 1888 prefill (71%)
+    #
+    # bytes_per_param per quant: Q4_K_M ≈ 0.57, Q5_K_M ≈ 0.70, Q8_0 ≈ 1.06.
+    # Architecture specs (Qwen 2.5 family from HF config.json):
+    #   7B:  3584 hidden / 28 layers / 28 attn heads / 4 KV heads (GQA)
+    #   32B: 5120 hidden / 64 layers / 40 attn heads / 8 KV heads (GQA)
+    "qwen2.5-7b-q4-dense": {
+        "display_name": "Qwen 2.5 7B Instruct Q4_K_M (dense — perf reference)",
+        "family": "qwen2.5",
+        "is_moe": False,
+        "total_params": 7_620_000_000,
+        "active_params": 7_620_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_700_000_000,
+        "hidden_dim": 3584,
+        "num_layers": 28,
+        "num_attention_heads": 28,
+        "num_kv_heads": 4,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        # Q4_K_M weight-only — same fp16 runtime caveat as 14B Q4 dense
+        # (gates 🔴 dtype_mismatch on Mid INT8-only).
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "perf_reference_only": True,
+    },
+    "qwen2.5-7b-q5-dense": {
+        "display_name": "Qwen 2.5 7B Instruct Q5_K_M (dense — perf reference)",
+        "family": "qwen2.5",
+        "is_moe": False,
+        "total_params": 7_620_000_000,
+        "active_params": 7_620_000_000,
+        "bytes_per_param": 0.70,
+        "gguf_bytes": 5_400_000_000,
+        "hidden_dim": 3584,
+        "num_layers": 28,
+        "num_attention_heads": 28,
+        "num_kv_heads": 4,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q5_K_M",
+        "perf_reference_only": True,
+    },
+    "qwen2.5-7b-q8-dense": {
+        "display_name": "Qwen 2.5 7B Instruct Q8_0 (dense — perf reference)",
+        "family": "qwen2.5",
+        "is_moe": False,
+        "total_params": 7_620_000_000,
+        "active_params": 7_620_000_000,
+        "bytes_per_param": 1.06,
+        "gguf_bytes": 8_100_000_000,
+        "hidden_dim": 3584,
+        "num_layers": 28,
+        "num_attention_heads": 28,
+        "num_kv_heads": 4,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q8_0",
+        "perf_reference_only": True,
+    },
+    "qwen2.5-32b-q4-dense": {
+        "display_name": "Qwen 2.5 32B Instruct Q4_K_M (dense — perf reference)",
+        "family": "qwen2.5",
+        "is_moe": False,
+        "total_params": 32_500_000_000,
+        "active_params": 32_500_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_525_000_000,
+        "hidden_dim": 5120,
+        "num_layers": 64,
+        "num_attention_heads": 40,
+        "num_kv_heads": 8,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "perf_reference_only": True,
+    },
+    "qwen2.5-32b-q5-dense": {
+        "display_name": "Qwen 2.5 32B Instruct Q5_K_M (dense — perf reference)",
+        "family": "qwen2.5",
+        "is_moe": False,
+        "total_params": 32_500_000_000,
+        "active_params": 32_500_000_000,
+        "bytes_per_param": 0.70,
+        "gguf_bytes": 22_750_000_000,
+        "hidden_dim": 5120,
+        "num_layers": 64,
+        "num_attention_heads": 40,
+        "num_kv_heads": 8,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q5_K_M",
+        "perf_reference_only": True,
+    },
 }
 
 # Reference model for per-category-Δ rendering. UI labels comparisons
