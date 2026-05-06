@@ -611,6 +611,148 @@ MODELS: dict[str, dict] = {
         ),
     },
     # ─────────────────────────────────────────────────────────────────
+    # Apples-to-apples MoE base: Qwen3-30B-A3B-Instruct-2507 stock.
+    # Per [docs] 2026-05-06 09:06 / 09:19 — this is the TRUE base of the
+    # Skippy MoE FT row above (commit 704a2fb 2026-04-17 + adapter_config
+    # base_model_name_or_path verified). With this row in the catalog, the
+    # apples-to-apples MoE-base delta is now legible:
+    #   Skippy MoE FT (0.689) vs Instruct-2507 stock (0.712) = −2.3pp
+    #   (fine-tune slightly regressed against its own base — current
+    #    attention-only LoRA recipe doesn't transfer capability to MoE)
+    # Architecture sibling of qwen3-30b-a3b-q4-moe — measurement_alias
+    # so 5090 perf reuses the existing measured cells (same arch).
+    "qwen3-30b-a3b-instruct-q4-moe": {
+        "display_name": "Qwen3-30B-A3B-Instruct-2507 stock (MoE, Q4_K_M)",
+        "family": "qwen3",
+        "base_model": "Qwen3-30B-A3B-Instruct-2507",
+        "is_moe": True,
+        "total_params": 30_500_000_000,
+        "active_params": 3_300_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_556_684_448,
+        "hidden_dim": 2048,
+        "num_layers": 48,
+        "num_attention_heads": 32,
+        "num_kv_heads": 4,
+        "num_experts": 128,
+        "experts_per_token": 8,
+        "vocab_size": 151936,
+        "ctx_len_trained": 262144,
+        "compute_dtype": "int8",
+        "quant_scheme": "Q4_K_M",
+        # Same architecture as qwen3-30b-a3b-q4-moe (the FT row); perf
+        # measurements are 1-for-1. Borrow that model's measured cells.
+        "measurement_alias": "qwen3-30b-a3b-q4-moe",
+        # v2+RAG eval at 5090, Q4_K_M, 132 prompts. Run conducted by
+        # [docs] 2026-05-04 17:03; eval/results/acc_baseline-qwen3-30b
+        # -a3b-instruct-2507-v2-rag_20260504-170335.json.
+        "training": "public_stock",
+        "pass_rate": 0.712,
+        "pass_n_passes": 94,
+        "pass_n_total": 132,
+        "category_deltas": {},  # per-category data captured in [docs] 09:19
+                                # message; populate when category_delta UI
+                                # supports the dict-of-dicts shape from the
+                                # eval harness.
+        "accuracy_bullet": (
+            "**True base of Skippy MoE FT** (Qwen3-30B-A3B-Instruct-2507). "
+            "Apples-to-apples reference: the Skippy MoE FT row (0.689) vs "
+            "this row (0.712) = **−2.3pp** — the fine-tune slightly "
+            "regressed vs its own base. The +5.3pp 'win' vs the Thinking "
+            "sibling row was sister-model gap, NOT recipe gain. Validated "
+            "MoE-base fine-tune gain is pending an MoE-aware LoRA recipe "
+            "(router + experts on RunPod, currently training)."
+        ),
+    },
+    # ─────────────────────────────────────────────────────────────────
+    # Skippy 7B v4 dense fine-tune — current production model per [docs]
+    # 2026-05-04 22:20. Apples-to-apples validated fine-tune gain:
+    # +3.1pp vs Qwen 2.5 7B Instruct stock (0.674 → 0.705).
+    # Architecture sibling of qwen2.5-7b-q4-dense — measurement_alias
+    # so 5090 perf reuses the 183.9 tok/s measured cell.
+    "qwen25-7b-v4-q4-dense": {
+        "display_name": "Qwen 2.5 7B Skippy v4 fine-tune (dense, Q4_K_M)",
+        "family": "qwen2.5",
+        "base_model": "Qwen 2.5 7B Instruct",
+        "is_moe": False,
+        "total_params": 7_620_000_000,
+        "active_params": 7_620_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_700_000_000,
+        "hidden_dim": 3584,
+        "num_layers": 28,
+        "num_attention_heads": 28,
+        "num_kv_heads": 4,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen2.5-7b-q4-dense",  # same arch — reuse 5090 cell
+        # v2+RAG eval @ 5090. Run by [docs] 2026-05-02. Source:
+        # eval/results/acc_candidate-kyle-qwen25-7b-v4-v2-rag_20260502-175416.json
+        "training": "skippy_finetune_v4",
+        "pass_rate": 0.705,
+        "pass_n_passes": 93,
+        "pass_n_total": 132,
+        "category_deltas": {},  # see [docs] 09:19 per-category breakdown
+        "accuracy_bullet": (
+            "**Current production model** (per [docs] 2026-05-04 22:20). "
+            "Apples-to-apples validated fine-tune: **+3.1pp** vs Qwen 2.5 "
+            "7B Instruct base (0.674 → 0.705). v4 recipe = SFTTrainer + "
+            "assistant_only_loss, 100 refusal exemplars, 2 epochs. "
+            "Asymmetry pattern: gains on RAG-retrieval categories "
+            "(rag_datasheet +3, rag_email +3, multihop +1) — loses on "
+            "long-form-reasoning (reasoning −3, terser FT outputs lose "
+            "substring-grader points). Clean over-gen (0%), proper "
+            "refusal (9/9), voice preserved. Trained locally on 5090 in "
+            "~46 min, $0."
+        ),
+    },
+    # Skippy 14B v4 dense fine-tune — best headline of the v4 campaign
+    # but with a confident-fabrication regression. NOT recommended as
+    # production until RAG-grounded refusal exemplars added (per [docs]
+    # 2026-05-02 20:22 + 2026-05-06 09:06).
+    "qwen25-14b-v4-q4-dense": {
+        "display_name": "Qwen 2.5 14B Skippy v4 fine-tune (dense, Q4_K_M)",
+        "family": "qwen2.5",
+        "base_model": "Qwen 2.5 14B Instruct",
+        "is_moe": False,
+        "total_params": 14_700_000_000,
+        "active_params": 14_700_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 8_986_070_304,
+        "hidden_dim": 5120,
+        "num_layers": 48,
+        "num_attention_heads": 40,
+        "num_kv_heads": 8,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen2.5-14b-q4-dense",  # same arch — reuse 5090 cell
+        # v2+RAG eval. Source: eval/results/acc_candidate-kyle-qwen25-
+        # 14b-v1-v2-rag_20260502-201717.json (filename is v1 since
+        # versioning collided; this IS the v4 recipe applied to 14B).
+        "training": "skippy_finetune_v4",
+        "pass_rate": 0.727,
+        "pass_n_passes": 96,
+        "pass_n_total": 132,
+        "category_deltas": {},  # see [docs] 09:19 per-category breakdown
+        "accuracy_bullet": (
+            "**Best headline of the v4 campaign** (+5.3pp vs Qwen 2.5 14B "
+            "Instruct base — apples-to-apples). "
+            "⚠️ **NOT recommended as production**: fabricates fictional "
+            "features. `refusal_made_up_peripheral` 0/3 — confidently "
+            "invents 'QuantumFlow Engine' specs for fictional peripherals. "
+            "Same training data + recipe as 7B v4 (which got 3/3); only "
+            "difference is base capacity. Hypothesis: 14B has learned the "
+            "spec-sheet style well enough that it confidently completes "
+            "plausible-sounding nonsense rather than refusing. Unblock "
+            "condition: RAG-grounded refusal exemplars in the training "
+            "set. Trained on 5090 (QLoRA 4-bit) in ~46 min."
+        ),
+    },
+    # ─────────────────────────────────────────────────────────────────
     # Performance-comparison reference entries — Qwen 2.5 7B + 32B dense
     # (per [docs] 2026-05-01 20:55 spec mirroring keyhole-sizer's 7503f0c
     # / 66edfa2). NOT replacements for the production reference; surfaced
@@ -635,7 +777,7 @@ MODELS: dict[str, dict] = {
     #   7B:  3584 hidden / 28 layers / 28 attn heads / 4 KV heads (GQA)
     #   32B: 5120 hidden / 64 layers / 40 attn heads / 8 KV heads (GQA)
     "qwen2.5-7b-q4-dense": {
-        "display_name": "Qwen 2.5 7B Instruct Q4_K_M (dense — perf reference)",
+        "display_name": "Qwen 2.5 7B Instruct Q4_K_M (apples-to-apples 7B base)",
         "family": "qwen2.5",
         "base_model": "Qwen 2.5 7B Instruct (stock)",
         "is_moe": False,
@@ -653,7 +795,23 @@ MODELS: dict[str, dict] = {
         # (gates 🔴 dtype_mismatch on Mid INT8-only).
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
-        "perf_reference_only": True,
+        # Promoted from perf-reference-only after [docs] 2026-05-06 09:19
+        # provided v2+RAG eval data for this row. It's the apples-to-
+        # apples base for the Skippy 7B v4 fine-tune (+3.1pp anchor).
+        # Source: eval/results/acc_candidate-qwen2.5-7b-instruct-v2-rag_
+        # 20260502-*.json per [docs] 09:19 QWEN25_7B_BASE breakdown.
+        "training": "public_stock",
+        "pass_rate": 0.674,
+        "pass_n_passes": 89,
+        "pass_n_total": 132,
+        "category_deltas": {},  # per-category in [docs] 09:19 (dict-of-dicts shape)
+        "accuracy_bullet": (
+            "**Apples-to-apples 7B base** for the Skippy 7B v4 fine-tune "
+            "(+3.1pp anchor). Same architecture / quantization / 5090 "
+            "host as 7B v4 — only difference is the LoRA training. The "
+            "Q5/Q8 7B perf-reference rows below extend this to other "
+            "quants (no eval data on those — perf comparison only)."
+        ),
     },
     "qwen2.5-7b-q5-dense": {
         "display_name": "Qwen 2.5 7B Instruct Q5_K_M (dense — perf reference)",
