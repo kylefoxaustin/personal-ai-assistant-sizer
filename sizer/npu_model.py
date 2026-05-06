@@ -518,24 +518,21 @@ MODELS: dict[str, dict] = {
         "pass_n_passes": 91,
         "pass_n_total": 132,
         "category_deltas": {},
-        # Updated 2026-05-06 per [docs] 09:45 base-identity confirmation:
-        # the previous "+5.3pp delta vs stock public reasoning models"
-        # framing was confounded by the 7.6pp Instruct-vs-Thinking
-        # sister-model gap. Apples-to-apples (vs Instruct-2507 base):
-        # Skippy MoE FT actually regressed −2.3pp. Retired the bad claim;
-        # apples-to-apples MoE-base fine-tune validation is pending an
-        # MoE-aware LoRA recipe (router + experts) — current attention-
-        # only LoRA didn't transfer capability to Qwen3-MoE.
+        # Updated 2026-05-06 per [docs] 09:45 base-identity confirmation
+        # + 09:51 production-shift to 7B v4: this row is no longer
+        # production; it's the historical MoE FT v1 that lost capability
+        # via attention-only LoRA on Qwen3-MoE base. Production reverted
+        # to Skippy 7B v4 (qwen25-7b-v4-q4-dense) on 2026-05-04 17:30.
         "accuracy_bullet": (
-            "Production reference (current shipping model). Domain "
-            "fine-tuning gains validated on **dense Qwen 2.5** (7B v4 "
-            "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases — "
-            "apples-to-apples). MoE-base validation pending: current "
-            "attention-only LoRA recipe does not transfer capability to "
-            "Qwen3-MoE; an MoE-aware LoRA target test (router + experts) "
-            "on RunPod is the next milestone. The −5.3pp delta vs the "
-            "Thinking-2507 row is a SISTER-MODEL gap (different base), "
-            "not a fine-tune-vs-base measurement."
+            "**Historical MoE fine-tune v1** (was production until "
+            "2026-05-04). Apples-to-apples vs its true Instruct-2507 "
+            "base = **−2.3pp** (regressed): the attention-only LoRA "
+            "recipe doesn't transfer capability to Qwen3-MoE. Domain "
+            "fine-tuning gains validated on **dense Qwen 2.5** instead "
+            "(7B v4 +3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
+            "MoE-aware LoRA test (router + experts) on RunPod is the "
+            "next milestone. The +5.3pp Δ vs the Thinking-2507 row is a "
+            "SISTER-MODEL gap (different base), not a fine-tune gain."
         ),
     },
     # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
@@ -895,7 +892,10 @@ MODELS: dict[str, dict] = {
 # as "vs Skippy MoE fine-tune (production)" and the production model
 # itself shows no per-category breakdown (it would be 0 across the
 # board). Mirror of keyhole-sizer's PRODUCTION_REFERENCE_KEY pattern.
-PRODUCTION_REFERENCE_KEY = "qwen3-30b-a3b-q4-moe"
+# Updated 2026-05-06 per [docs] 09:51: production reverted to Skippy 7B v4
+# on 2026-05-04 17:30 after MoE v4 regressed; the 'Δ vs production' column
+# now anchors against current shipping (7B v4), not historical MoE FT.
+PRODUCTION_REFERENCE_KEY = "qwen25-7b-v4-q4-dense"
 
 # Human-readable labels for category-Δ display. Keyed by Skippy v2
 # prompt category. Categories not listed in a model's category_deltas

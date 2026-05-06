@@ -87,14 +87,19 @@ with st.sidebar:
                "personal-ai-framework `eval/run_sizer_bakeoffs.py`.")
 
     model_keys = list(MODELS.keys())
+    # Default to current production model (Skippy 7B v4 dense per
+    # [docs] 2026-05-04 22:20 + 2026-05-06 09:51). Was previously
+    # qwen3-30b-a3b-q4-moe; shifted to track actual shipping model.
     model_key = st.selectbox(
         "Model",
         options=model_keys,
         format_func=lambda k: MODELS[k]["display_name"],
-        index=model_keys.index("qwen3-30b-a3b-q4-moe"),
+        index=model_keys.index(PRODUCTION_REFERENCE_KEY),
         key="k_model",
         help="MoE decode tok/s scales with active params (~3B) not total "
-             "params (~30B). Dense 14B moves ~5× more bytes per decoded token.",
+             "params (~30B). Dense 14B moves ~5× more bytes per decoded "
+             "token. Default lands on the current production model "
+             "(Skippy 7B v4 dense).",
     )
 
     # ── Per-model accuracy caption + expander ──
