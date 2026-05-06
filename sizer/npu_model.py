@@ -441,6 +441,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-14b-q4-dense": {
         "display_name": "Qwen 2.5 14B Skippy fine-tune (dense, Q4_K_M)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 14B Instruct",
         "is_moe": False,
         "total_params": 14_700_000_000,
         "active_params": 14_700_000_000,
@@ -483,6 +484,12 @@ MODELS: dict[str, dict] = {
     "qwen3-30b-a3b-q4-moe": {
         "display_name": "Qwen3-30B-A3B Skippy fine-tune (MoE, Q4_K_M)",
         "family": "qwen3",
+        # Base lineage confirmed by [docs] 2026-05-05 09:45 from local
+        # training artifacts (commit 704a2fb 2026-04-17 + adapter_config.json
+        # base_model_name_or_path). Trained on Instruct-2507, NOT Thinking
+        # — the THINKING_MOE_STOCK row uses Thinking-2507, so this and that
+        # row are SISTER-MODEL comparisons, not base-vs-fine-tune.
+        "base_model": "Qwen3-30B-A3B-Instruct-2507",
         "is_moe": True,
         "total_params": 30_500_000_000,
         "active_params": 3_300_000_000,
@@ -511,11 +518,24 @@ MODELS: dict[str, dict] = {
         "pass_n_passes": 91,
         "pass_n_total": 132,
         "category_deltas": {},
+        # Updated 2026-05-06 per [docs] 09:45 base-identity confirmation:
+        # the previous "+5.3pp delta vs stock public reasoning models"
+        # framing was confounded by the 7.6pp Instruct-vs-Thinking
+        # sister-model gap. Apples-to-apples (vs Instruct-2507 base):
+        # Skippy MoE FT actually regressed −2.3pp. Retired the bad claim;
+        # apples-to-apples MoE-base fine-tune validation is pending an
+        # MoE-aware LoRA recipe (router + experts) — current attention-
+        # only LoRA didn't transfer capability to Qwen3-MoE.
         "accuracy_bullet": (
             "Production reference (current shipping model). Domain "
-            "fine-tuning lands the retrieval vocabulary the deck story "
-            "is about — the +5.3pp delta vs stock public reasoning models "
-            "isn't capability, it's domain knowledge."
+            "fine-tuning gains validated on **dense Qwen 2.5** (7B v4 "
+            "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases — "
+            "apples-to-apples). MoE-base validation pending: current "
+            "attention-only LoRA recipe does not transfer capability to "
+            "Qwen3-MoE; an MoE-aware LoRA target test (router + experts) "
+            "on RunPod is the next milestone. The −5.3pp delta vs the "
+            "Thinking-2507 row is a SISTER-MODEL gap (different base), "
+            "not a fine-tune-vs-base measurement."
         ),
     },
     # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
@@ -531,6 +551,12 @@ MODELS: dict[str, dict] = {
     "qwen3-30b-a3b-thinking-q4-moe": {
         "display_name": "Qwen3-30B-A3B-Thinking-2507 stock (MoE, Q4_K_M)",
         "family": "qwen3",
+        # Distinct base from the Skippy MoE FT row above — that row
+        # was trained on Instruct-2507; this row IS Thinking-2507 stock.
+        # Comparing the two rows is a SISTER-MODEL comparison (different
+        # bases), not a fine-tune-vs-base measurement. Per [docs]
+        # 2026-05-05 09:45 base-identity audit.
+        "base_model": "Qwen3-30B-A3B-Thinking-2507",
         "is_moe": True,
         "total_params": 30_500_000_000,
         "active_params": 3_300_000_000,
@@ -555,24 +581,33 @@ MODELS: dict[str, dict] = {
         # Resolved by Hardware.get_measured() and calibration_anchors().
         "measurement_alias": "qwen3-30b-a3b-q4-moe",
         # Stock public reasoning baseline. Same v2+RAG eval, same RTX
-        # 5090 host, same Q4_K_M GGUF — only difference is the training
-        # (Alibaba's reasoning-tune vs Kyle's domain LoRA). Δ -5.3pp
-        # overall, with the regression concentrated in domain retrieval.
+        # 5090 host, same Q4_K_M GGUF. Different BASE MODEL from the
+        # Skippy MoE FT row (Thinking-2507 here vs Instruct-2507 there)
+        # — sister-model bake-off, not a fine-tune-vs-base measurement.
+        # Per [docs] 2026-05-05 09:45 confound audit + recipe-taxonomy.md.
         "training": "public_stock",
         "pass_rate": 0.636,
         "pass_n_passes": 84,
         "pass_n_total": 132,
+        # category_deltas measured between this row (Thinking stock) and
+        # the Skippy MoE FT row (Instruct + LoRA). Both factors compose:
+        # sister-model gap (Instruct vs Thinking) + Kyle's domain LoRA
+        # on top of Instruct. Δ values are real measurements but
+        # interpretation must distinguish base-architecture differences
+        # from training differences.
         "category_deltas": {
-            "rag_datasheet": -8,    # 26 prompts; the domain vocabulary gap
+            "rag_datasheet": -8,    # 26 prompts; sister-model + LoRA effects combined
             "rag_email":     -3,    # 1 prompt × 3 samples; stock failed all three
-            "numerical_precision": +3,  # general reasoning Thinking trains harder for
+            "numerical_precision": +3,  # Thinking-2507 reasoning-tune wins here
             "refusal":       +2,    # scope-limiting tuned harder in Thinking
         },
         "accuracy_bullet": (
-            "Public reasoning models are stronger in general, but lose to "
-            "the domain fine-tune on retrieval-grounded queries — domain "
-            "knowledge doesn't fall out of larger general capability. "
-            "Wins numerical_precision + refusal; loses rag_datasheet."
+            "Stock public reasoning baseline (Qwen3-30B-A3B-Thinking-2507). "
+            "The Δ vs the Skippy MoE FT row is a **sister-model** comparison "
+            "(different base model — Thinking-2507 here vs Instruct-2507 "
+            "there), so the per-category deltas above mix two factors: "
+            "(a) base architecture differences and (b) Kyle's domain LoRA. "
+            "Don't read this as a fine-tune-vs-base measurement — it isn't."
         ),
     },
     # ─────────────────────────────────────────────────────────────────
@@ -602,6 +637,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-7b-q4-dense": {
         "display_name": "Qwen 2.5 7B Instruct Q4_K_M (dense — perf reference)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 7B Instruct (stock)",
         "is_moe": False,
         "total_params": 7_620_000_000,
         "active_params": 7_620_000_000,
@@ -622,6 +658,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-7b-q5-dense": {
         "display_name": "Qwen 2.5 7B Instruct Q5_K_M (dense — perf reference)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 7B Instruct (stock)",
         "is_moe": False,
         "total_params": 7_620_000_000,
         "active_params": 7_620_000_000,
@@ -640,6 +677,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-7b-q8-dense": {
         "display_name": "Qwen 2.5 7B Instruct Q8_0 (dense — perf reference)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 7B Instruct (stock)",
         "is_moe": False,
         "total_params": 7_620_000_000,
         "active_params": 7_620_000_000,
@@ -658,6 +696,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-32b-q4-dense": {
         "display_name": "Qwen 2.5 32B Instruct Q4_K_M (dense — perf reference)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 32B Instruct (stock)",
         "is_moe": False,
         "total_params": 32_500_000_000,
         "active_params": 32_500_000_000,
@@ -676,6 +715,7 @@ MODELS: dict[str, dict] = {
     "qwen2.5-32b-q5-dense": {
         "display_name": "Qwen 2.5 32B Instruct Q5_K_M (dense — perf reference)",
         "family": "qwen2.5",
+        "base_model": "Qwen 2.5 32B Instruct (stock)",
         "is_moe": False,
         "total_params": 32_500_000_000,
         "active_params": 32_500_000_000,

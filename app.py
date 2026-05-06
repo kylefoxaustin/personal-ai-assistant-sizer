@@ -152,12 +152,32 @@ with st.sidebar:
                 _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
                 _catalog_rows.append({
                     "Model":            _row_label,
+                    "Base":             _m.get("base_model", "—"),
                     "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
                     "Δ vs production":  _row_delta_str,
                     "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
                     "Training":         _m.get("training", "—"),
                 })
             st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
+            # Sister-model confound caveat per [docs] 2026-05-05 09:45
+            # base-identity audit: the "Δ vs production" column compares
+            # rows with potentially different base models. Skippy MoE FT
+            # was trained on Qwen3-30B-A3B-Instruct-2507; the Thinking-2507
+            # row is its sister model (different base, not a fine-tune-vs-
+            # base measurement). Apples-to-apples fine-tune gain anchors
+            # are the dense Qwen 2.5 fine-tunes (validated +3.1pp / +5.3pp
+            # vs respective Instruct bases on 7B / 14B).
+            st.caption(
+                "**Read the Base column carefully.** Δ values between rows "
+                "with different bases mix two factors: (a) base architecture "
+                "differences and (b) training differences. The Δ between "
+                "the Skippy MoE FT row (Instruct-2507 base) and the "
+                "Thinking-2507 stock row is a *sister-model* comparison — "
+                "not a fine-tune-vs-base measurement. Apples-to-apples "
+                "fine-tune gains are validated on dense Qwen 2.5 (7B v4 "
+                "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
+                "MoE-base validation pending an MoE-aware LoRA recipe."
+            )
 
             if _selected_model.get("category_deltas"):
                 _ref_short = _production_model["display_name"].split(" (")[0]
