@@ -467,12 +467,21 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.682,
         "pass_n_passes": 90,
         "pass_n_total": 132,
-        # Tier 3 schema migration 2026-05-07: dropped stale signed-int
-        # deltas (were against OLD production = MoE FT v1 0.689; the
-        # PRODUCTION_REFERENCE_KEY shifted to 7B v4 on 05-06). Pinging
-        # [docs] for raw per-category data on this entry; populating
-        # with dict-of-dicts shape when it lands.
-        "category_deltas": {},
+        # Per [docs] 2026-05-07 17:26 (Tier 3 schema-reconciliation
+        # follow-up). Source: acc_reference-dense-q4km-v2-rag_20260423-
+        # 091847.json. Note: same rag_datasheet count as MoE-router v1
+        # (51/78) — coincidence; different recipes.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 51, "n": 78, "rate": 0.654},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "Dense and MoE fine-tunes hit near-parity on quality "
             "(Δ -0.7pp vs production MoE). MoE wins on per-token cost "
@@ -516,7 +525,25 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.689,
         "pass_n_passes": 91,
         "pass_n_total": 132,
-        "category_deltas": {},
+        # Per [docs] 2026-05-07 17:26 (Tier 3 schema-reconciliation
+        # follow-up). Source: acc_reference-moe-q4km-v2-rag_20260423-
+        # 091231.json. Notable: refusal 7/9 — the original production
+        # model ALREADY had a refusal regression (sat between base
+        # 6/9 and post-v4 fine-tunes 9/9). Apples-to-apples vs the
+        # Instruct-2507 base shows the regression contour: rag_datasheet
+        # +1 vs base (3 → 54/78), refusal +1 (6 → 7/9), other categories
+        # flat or worse.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 54, "n": 78, "rate": 0.692},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  7, "n":  9, "rate": 0.778},  # ⚠️ partial regression
+        },
         # Updated 2026-05-06 per [docs] 09:45 base-identity confirmation
         # + 09:51 production-shift to 7B v4: this row is no longer
         # production; it's the historical MoE FT v1 that lost capability
@@ -585,13 +612,26 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.636,
         "pass_n_passes": 84,
         "pass_n_total": 132,
-        # Tier 3 schema migration 2026-05-07: dropped stale signed-int
-        # deltas (were against OLD production = MoE FT v1; PRODUCTION_
-        # REFERENCE_KEY shifted to 7B v4 on 05-06). Sister-model framing
-        # in accuracy_bullet still holds. Pinging [docs] for raw per-
-        # category data on this entry; populating with dict-of-dicts
-        # shape when it lands.
-        "category_deltas": {},
+        # Per [docs] 2026-05-07 17:26 (Tier 3 schema-reconciliation
+        # follow-up). Source: acc_candidate-moe-thinking-v2-rag_20260424-
+        # 094820.json. Notable: 0/3 rag_email — known-broken category at
+        # the Thinking-2507 base level. All three Skippy v4 fine-tunes
+        # (7B/MoE-router/MoE-full) recovered rag_email to 3/3, except
+        # 14B v4 which regressed back to 0/3. The base failure mode
+        # propagates through fine-tuning differently per recipe.
+        # numerical_precision 6/6 perfect (Thinking's reasoning tune
+        # delivers there).
+        "category_deltas": {
+            "coding":              {"pass":  5, "n":  6, "rate": 0.833},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ perfect
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 46, "n": 78, "rate": 0.590},
+            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ base-level fail
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "Stock public reasoning baseline (Qwen3-30B-A3B-Thinking-2507). "
             "The Δ vs the Skippy MoE FT row is a **sister-model** comparison "
