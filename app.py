@@ -184,26 +184,82 @@ with st.sidebar:
                 "MoE-base validation pending an MoE-aware LoRA recipe."
             )
 
-            if _selected_model.get("category_deltas"):
+            # Per-category breakdown rendering — handles two schemas:
+            # (a) dict-of-dicts (Tier 3 schema, 2026-05-07): each entry
+            #     is {"pass": N, "n": total, "rate": fraction}. Renders
+            #     raw counts + Δ vs production where production also has
+            #     dict-of-dicts data. This is the preferred shape going
+            #     forward.
+            # (b) signed-int (legacy): each entry is a signed delta vs
+            #     OLD production reference. Renders as before. Surviving
+            #     legacy entries are flagged as awaiting migration.
+            _cat_deltas = _selected_model.get("category_deltas") or {}
+            _has_rich = any(isinstance(v, dict) for v in _cat_deltas.values())
+            _has_legacy_int = any(isinstance(v, (int, float))
+                                   for v in _cat_deltas.values())
+
+            if _has_rich:
+                # Dict-of-dicts. Show this model's raw counts + Δ vs
+                # production where production has matching data.
+                _ref_short = _production_model["display_name"].split(" (")[0]
+                _prod_cats = _production_model.get("category_deltas") or {}
+                _prod_has_rich = any(isinstance(v, dict)
+                                      for v in _prod_cats.values())
+                if _prod_has_rich:
+                    st.markdown(
+                        f"**Per-category breakdown** (raw rates; Δ vs "
+                        f"production = {_ref_short}):"
+                    )
+                else:
+                    st.markdown(
+                        "**Per-category breakdown** (raw rates; production "
+                        "ref is missing per-category data — Δ unavailable):"
+                    )
+                for cat, cat_data in _cat_deltas.items():
+                    cat_label = CATEGORY_LABELS.get(cat, cat)
+                    p, n = cat_data["pass"], cat_data["n"]
+                    rate_pct = cat_data["rate"] * 100.0
+                    line = (f"- {cat_label}: **{p}/{n}** "
+                            f"({rate_pct:.1f}%)")
+                    prod_cat = _prod_cats.get(cat)
+                    if isinstance(prod_cat, dict):
+                        d_passes = p - prod_cat["pass"]
+                        sign = "+" if d_passes >= 0 else ""
+                        line += f" — Δ vs prod: **{sign}{d_passes} passes**"
+                    st.markdown(line)
+                st.caption(
+                    "Per-category data from [docs] eval JSONs (132-sample "
+                    "v2-RAG, RAG on, deterministic temp=0). Δ vs production "
+                    "computed at render time from raw counts."
+                )
+            elif _has_legacy_int:
+                # Legacy signed-int delta-vs-production schema.
                 _ref_short = _production_model["display_name"].split(" (")[0]
                 st.markdown(
                     f"**Per-category Δ vs production** ({_ref_short}, "
                     f"positive = this model wins):"
                 )
-                for cat, dp in _selected_model["category_deltas"].items():
+                for cat, dp in _cat_deltas.items():
                     cat_label = CATEGORY_LABELS.get(cat, cat)
                     sign = "+" if dp >= 0 else ""
                     st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
                 st.caption(
-                    "Δ measured vs Skippy v2 prompt set (132 samples), "
-                    "RAG on (8 chunks via hybrid retrieval). Categories "
-                    "not listed are flat ±0 between this model and production."
+                    "⚠️ Legacy schema (signed-int delta). Awaiting migration "
+                    "to dict-of-dicts raw rates. Categories not listed are "
+                    "flat ±0 vs the original production reference."
                 )
             elif _is_production:
                 st.caption(
                     "Production reference — per-category Δ is zero against "
                     "itself. Switch the selector above to see breakdowns "
                     "for the alternative entries."
+                )
+            else:
+                # Entry has empty category_deltas — pending [docs] data
+                st.caption(
+                    "Per-category breakdown not yet populated for this "
+                    "entry. (Awaiting eval-side per-category data from "
+                    "[docs] for older catalog entries.)"
                 )
 
             st.markdown(

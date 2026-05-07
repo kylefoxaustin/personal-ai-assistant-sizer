@@ -467,13 +467,12 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.682,
         "pass_n_passes": 90,
         "pass_n_total": 132,
-        # Δ vs production reference (Skippy MoE FT). MoE wins
-        # rag_datasheet by +3 → dense -3 here; MoE loses refusal -2 →
-        # dense +2 here. Sign: positive = THIS model wins vs production.
-        "category_deltas": {
-            "rag_datasheet": -3,
-            "refusal":       +2,
-        },
+        # Tier 3 schema migration 2026-05-07: dropped stale signed-int
+        # deltas (were against OLD production = MoE FT v1 0.689; the
+        # PRODUCTION_REFERENCE_KEY shifted to 7B v4 on 05-06). Pinging
+        # [docs] for raw per-category data on this entry; populating
+        # with dict-of-dicts shape when it lands.
+        "category_deltas": {},
         "accuracy_bullet": (
             "Dense and MoE fine-tunes hit near-parity on quality "
             "(Δ -0.7pp vs production MoE). MoE wins on per-token cost "
@@ -586,18 +585,13 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.636,
         "pass_n_passes": 84,
         "pass_n_total": 132,
-        # category_deltas measured between this row (Thinking stock) and
-        # the Skippy MoE FT row (Instruct + LoRA). Both factors compose:
-        # sister-model gap (Instruct vs Thinking) + Kyle's domain LoRA
-        # on top of Instruct. Δ values are real measurements but
-        # interpretation must distinguish base-architecture differences
-        # from training differences.
-        "category_deltas": {
-            "rag_datasheet": -8,    # 26 prompts; sister-model + LoRA effects combined
-            "rag_email":     -3,    # 1 prompt × 3 samples; stock failed all three
-            "numerical_precision": +3,  # Thinking-2507 reasoning-tune wins here
-            "refusal":       +2,    # scope-limiting tuned harder in Thinking
-        },
+        # Tier 3 schema migration 2026-05-07: dropped stale signed-int
+        # deltas (were against OLD production = MoE FT v1; PRODUCTION_
+        # REFERENCE_KEY shifted to 7B v4 on 05-06). Sister-model framing
+        # in accuracy_bullet still holds. Pinging [docs] for raw per-
+        # category data on this entry; populating with dict-of-dicts
+        # shape when it lands.
+        "category_deltas": {},
         "accuracy_bullet": (
             "Stock public reasoning baseline (Qwen3-30B-A3B-Thinking-2507). "
             "The Δ vs the Skippy MoE FT row is a **sister-model** comparison "
@@ -618,6 +612,14 @@ MODELS: dict[str, dict] = {
     #    attention-only LoRA recipe doesn't transfer capability to MoE)
     # Architecture sibling of qwen3-30b-a3b-q4-moe — measurement_alias
     # so 5090 perf reuses the existing measured cells (same arch).
+    # NOTE: starting 2026-05-07 (Tier 3 schema reconciliation), entries
+    # use dict-of-dicts category_deltas: {category: {pass, n, rate}}.
+    # Per [docs] 2026-05-06 09:51 deferred-by-design schema; [docs]
+    # 2026-05-07 13:17 Tier 2.x sweep complete + the catalog now stable
+    # enough to migrate. The UI handles both shapes (back-compat for
+    # legacy signed-int-delta entries that we don't have per-category
+    # raw data for yet — those entries' category_deltas are blanked
+    # rather than left stale-against-old-production-reference).
     "qwen3-30b-a3b-instruct-q4-moe": {
         "display_name": "Qwen3-30B-A3B-Instruct-2507 stock (MoE, Q4_K_M)",
         "family": "qwen3",
@@ -647,10 +649,19 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.712,
         "pass_n_passes": 94,
         "pass_n_total": 132,
-        "category_deltas": {},  # per-category data captured in [docs] 09:19
-                                # message; populate when category_delta UI
-                                # supports the dict-of-dicts shape from the
-                                # eval harness.
+        # Dict-of-dicts shape per [docs] 2026-05-06 09:19. Tier 3 schema
+        # migration 2026-05-07.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 55, "n": 78, "rate": 0.705},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "**True base of Skippy MoE FT** (Qwen3-30B-A3B-Instruct-2507). "
             "Apples-to-apples reference: the Skippy MoE FT row (0.689) vs "
@@ -691,7 +702,19 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.705,
         "pass_n_passes": 93,
         "pass_n_total": 132,
-        "category_deltas": {},  # see [docs] 09:19 per-category breakdown
+        # Per [docs] 2026-05-06 09:19. Asymmetry: 🟢 RAG/multihop lift,
+        # 🔴 reasoning regress (verbosity penalty on substring grader).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 57, "n": 78, "rate": 0.731},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  3, "n":  6, "rate": 0.500},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "**Current production model** (per [docs] 2026-05-04 22:20). "
             "Apples-to-apples validated fine-tune: **+3.1pp** vs Qwen 2.5 "
@@ -734,7 +757,20 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.727,
         "pass_n_passes": 96,
         "pass_n_total": 132,
-        "category_deltas": {},  # see [docs] 09:19 per-category breakdown
+        # Per [docs] 2026-05-06 09:19. Best dense headline; 🔴 rag_email
+        # 0/3 + refusal 6/9 (made_up_peripheral fabrication — partly
+        # base-model behavior the FT amplifies; per [docs] 12:44).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # perfect
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 60, "n": 78, "rate": 0.769},
+            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ regression
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ made_up_peripheral 0/3
+        },
         "accuracy_bullet": (
             "**Best headline of the v4 campaign** (+5.3pp vs Qwen 2.5 14B "
             "Instruct base — apples-to-apples). "
@@ -787,7 +823,20 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.674,
         "pass_n_passes": 89,
         "pass_n_total": 132,
-        "category_deltas": {},  # raw rates per [docs] 19:49 in dict-of-dicts shape
+        # Per [docs] 2026-05-06 19:49. multihop fully recovered (0/9 →
+        # 6/9 vs MoE v4); rag_datasheet didn't budge — domain-knowledge
+        # gap persists. Customer rule: include router, not experts.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 51, "n": 78, "rate": 0.654},
+            "rag_email":           {"pass":  2, "n":  3, "rate": 0.667},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "**Recommended MoE recipe** (attention + router LoRA via "
             "peft target_parameters=['gate.weight']). Validates the "
@@ -831,7 +880,21 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.629,
         "pass_n_passes": 83,
         "pass_n_total": 132,
-        "category_deltas": {},
+        # Per [docs] 2026-05-07 10:21. Hypothesis FALSIFIED: expert-FFN
+        # LoRA OVER-FITS at 6.5K corpus. 🔴 rag_blog 0/3 (NEW regression),
+        # rag_datasheet worsened 51 → 47/78 vs router-v1. Voice clipped
+        # to 104 char (vs 141) — became too terse for long-form.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ NEW regression
+            "rag_datasheet":       {"pass": 47, "n": 78, "rate": 0.603},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "**Hypothesis FALSIFIED — do not extend MoE LoRA past the "
             "router**. Attention + router + packed-expert FFNs (r=8 via "
@@ -874,7 +937,21 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.636,
         "pass_n_passes": 84,
         "pass_n_total": 132,
-        "category_deltas": {},
+        # Per [docs] 2026-05-07 03:03 (CLEAN run = recipe-clean 2-epoch).
+        # Trade-not-plateau: 🟢 refusal 9/9 (fixed base's made_up_peripheral
+        # 6/9), 🔴 multihop 3/9 (under-trained 2-ep), 🔴 numerical_precision
+        # 3/6 (lost base's perfect 6/6), 🔴 rag_datasheet 48/78 (over-fit).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  3, "n":  9, "rate": 0.333},  # ⚠️ regressed vs base
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},  # ⚠️ vs base 6/6
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 48, "n": 78, "rate": 0.615},  # ⚠️ vs base 51/78
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},  # ✅ fixed base's 6/9
+        },
         "accuracy_bullet": (
             "**32B v4 trade-not-plateau** — apples-to-apples −4.6pp vs "
             "Qwen2.5-32B-Instruct stock (0.682 → 0.636). Recipe-clean "
@@ -943,7 +1020,19 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.674,
         "pass_n_passes": 89,
         "pass_n_total": 132,
-        "category_deltas": {},  # per-category in [docs] 09:19 (dict-of-dicts shape)
+        # Per [docs] 2026-05-06 09:19 QWEN25_7B_BASE — apples-to-apples
+        # 7B v4 baseline. Cleanly handles refusal 9/9 (no fabrication).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  5, "n":  9, "rate": 0.556},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 54, "n": 78, "rate": 0.692},
+            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+        },
         "accuracy_bullet": (
             "**Apples-to-apples 7B base** for the Skippy 7B v4 fine-tune "
             "(+3.1pp anchor). Same architecture / quantization / 5090 "
@@ -1018,7 +1107,21 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.682,
         "pass_n_passes": 90,
         "pass_n_total": 132,
-        "category_deltas": {},  # raw rates per [docs] 12:44 (dict-of-dicts shape)
+        # Per [docs] 2026-05-07 12:44. Notable: 🟢 numerical_precision
+        # 6/6 (PERFECT — only entry with that), 🔴 refusal 6/9
+        # (fabricates made_up_peripheral 3/9 — base behavior the v4
+        # recipe inherits and amplifies in 14B v4).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ perfect
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 51, "n": 78, "rate": 0.654},
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+        },
         "accuracy_bullet": (
             "**Apples-to-apples 32B base** for the Skippy 32B v4 trade "
             "analysis. Notable base-model behaviors: 6/6 numerical_"
