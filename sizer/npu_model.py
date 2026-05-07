@@ -741,12 +741,154 @@ MODELS: dict[str, dict] = {
             "⚠️ **NOT recommended as production**: fabricates fictional "
             "features. `refusal_made_up_peripheral` 0/3 — confidently "
             "invents 'QuantumFlow Engine' specs for fictional peripherals. "
-            "Same training data + recipe as 7B v4 (which got 3/3); only "
-            "difference is base capacity. Hypothesis: 14B has learned the "
-            "spec-sheet style well enough that it confidently completes "
-            "plausible-sounding nonsense rather than refusing. Unblock "
-            "condition: RAG-grounded refusal exemplars in the training "
-            "set. Trained on 5090 (QLoRA 4-bit) in ~46 min."
+            "Per [docs] 2026-05-07 12:44 finding: the made_up_peripheral "
+            "fabrication is partly Qwen2.5 base behavior (32B Instruct "
+            "stock also fabricates 3/9 on those prompts) — the v4 recipe "
+            "INHERITS and AMPLIFIES the base's tendency rather than "
+            "creating it from nothing. Unblock condition: RAG-grounded "
+            "refusal exemplars in training to override the base's "
+            "completion prior. Trained on 5090 (QLoRA 4-bit) in ~46 min."
+        ),
+    },
+    # ─────────────────────────────────────────────────────────────────
+    # Tier 2.x diagnostic MoE entries — Qwen3-30B-A3B with progressively
+    # more LoRA targets. Per [docs] 2026-05-06 19:49 + 2026-05-07 10:21.
+    # Customer-template story: more LoRA capacity != better. The router
+    # variant is the recommended MoE recipe; expert-FFN LoRA over-fits
+    # at this corpus size.
+    #
+    # Skippy MoE-router v1 — RECOMMENDED MoE recipe.
+    # attention + router LoRA (target_parameters=['gate.weight']).
+    # Recovers reasoning capability that attention-only LoRA destroyed,
+    # but does NOT recover domain knowledge (rag_datasheet stays at
+    # 51/78 vs the base's 55/78). −3.8pp vs Instruct-2507 base; +5.3pp
+    # over MoE v4's catastrophic 61.4%. ~$15 H100 cost.
+    "qwen3-30b-a3b-router-v1-q4-moe": {
+        "display_name": "Qwen3-30B-A3B Skippy MoE-router v1 (MoE, Q4_K_M)",
+        "family": "qwen3",
+        "base_model": "Qwen3-30B-A3B-Instruct-2507",
+        "is_moe": True,
+        "total_params": 30_500_000_000,
+        "active_params": 3_300_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_556_684_448,
+        "hidden_dim": 2048,
+        "num_layers": 48,
+        "num_attention_heads": 32,
+        "num_kv_heads": 4,
+        "num_experts": 128,
+        "experts_per_token": 8,
+        "vocab_size": 151936,
+        "ctx_len_trained": 262144,
+        "compute_dtype": "int8",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen3-30b-a3b-q4-moe",  # same arch — reuse perf cells
+        "training": "skippy_moe_router_v1",
+        "pass_rate": 0.674,
+        "pass_n_passes": 89,
+        "pass_n_total": 132,
+        "category_deltas": {},  # raw rates per [docs] 19:49 in dict-of-dicts shape
+        "accuracy_bullet": (
+            "**Recommended MoE recipe** (attention + router LoRA via "
+            "peft target_parameters=['gate.weight']). Validates the "
+            "MoE-aware-targeting hypothesis: recovers the reasoning "
+            "regression that attention-only LoRA causes on Qwen3-A3B "
+            "(multihop 0/9 → 6/9 vs MoE v4). Headline still −3.8pp vs "
+            "Instruct-2507 base — domain-knowledge gap persists "
+            "(rag_datasheet 51/78 vs base 55/78). Customer rule for "
+            "MoE bases: include the router but NOT expert FFNs (next "
+            "row shows why expert-FFN LoRA over-fits at this corpus "
+            "size). ~$15 H100 cost."
+        ),
+    },
+    # Skippy MoE-full v1 — CAUTIONARY (over-fit). attention + router +
+    # packed-expert FFNs (r=8 via target_parameters on packed tensors).
+    # 374M trainable params (1.21%) over-fit the 6,517-example corpus,
+    # broke rag_blog (3/3 → 0/3), worsened rag_datasheet (51 → 47/78)
+    # vs router-v1. Voice clipped to 104 char (vs router-v1's 141) —
+    # model became too terse for long-form retrieval.
+    "qwen3-30b-a3b-full-v1-q4-moe": {
+        "display_name": "Qwen3-30B-A3B Skippy MoE-full v1 (cautionary, MoE, Q4_K_M)",
+        "family": "qwen3",
+        "base_model": "Qwen3-30B-A3B-Instruct-2507",
+        "is_moe": True,
+        "total_params": 30_500_000_000,
+        "active_params": 3_300_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_556_684_448,
+        "hidden_dim": 2048,
+        "num_layers": 48,
+        "num_attention_heads": 32,
+        "num_kv_heads": 4,
+        "num_experts": 128,
+        "experts_per_token": 8,
+        "vocab_size": 151936,
+        "ctx_len_trained": 262144,
+        "compute_dtype": "int8",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen3-30b-a3b-q4-moe",
+        "training": "skippy_moe_full_v1",
+        "pass_rate": 0.629,
+        "pass_n_passes": 83,
+        "pass_n_total": 132,
+        "category_deltas": {},
+        "accuracy_bullet": (
+            "**Hypothesis FALSIFIED — do not extend MoE LoRA past the "
+            "router**. Attention + router + packed-expert FFNs (r=8 via "
+            "target_parameters on transformers' packed [128, ...] expert "
+            "tensors). 374M trainable params (1.21% of model) over-fit "
+            "the 6,517-example corpus. BROKE rag_blog (3/3 → 0/3) and "
+            "worsened rag_datasheet (51 → 47/78) vs router-v1. Voice "
+            "clipped to 104 char avg (vs router-v1's 141) — became too "
+            "terse for long-form retrieval. Customer rule: for MoE "
+            "bases at 6.5K-example corpus, stop at router LoRA; expert "
+            "FFN LoRA over-fits."
+        ),
+    },
+    # Skippy 32B v4 CLEAN — recipe-clean dense 32B fine-tune, NOT
+    # recommended. Per [docs] 2026-05-07 03:03 + 12:44. Apples-to-apples
+    # vs Qwen2.5-32B Instruct stock baseline (pass_rate 0.682) =
+    # **−4.6pp** trade. Fixes 32B base's made_up_peripheral fabrication
+    # (refusal 6/9 → 9/9) at the cost of 9 capability points spread
+    # across multihop / numerical_precision / rag_datasheet. The recipe
+    # doesn't extend cleanly past 14B at this corpus size.
+    "qwen25-32b-v4-q4-dense": {
+        "display_name": "Qwen 2.5 32B Skippy v4 CLEAN (cautionary, dense, Q4_K_M)",
+        "family": "qwen2.5",
+        "base_model": "Qwen 2.5 32B Instruct",
+        "is_moe": False,
+        "total_params": 32_500_000_000,
+        "active_params": 32_500_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_525_000_000,
+        "hidden_dim": 5120,
+        "num_layers": 64,
+        "num_attention_heads": 40,
+        "num_kv_heads": 8,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen2.5-32b-q4-dense",  # existing 32B perf cell
+        "training": "skippy_finetune_v4_clean",
+        "pass_rate": 0.636,
+        "pass_n_passes": 84,
+        "pass_n_total": 132,
+        "category_deltas": {},
+        "accuracy_bullet": (
+            "**32B v4 trade-not-plateau** — apples-to-apples −4.6pp vs "
+            "Qwen2.5-32B-Instruct stock (0.682 → 0.636). Recipe-clean "
+            "(2 epochs + assistant_only_loss + messages format). The "
+            "fine-tune trades 9 capability points for 3 safety points: "
+            "✅ fixes 32B base's made_up_peripheral fabrication "
+            "(refusal 6/9 → 9/9), ❌ loses the base's perfect "
+            "numerical_precision (6/6 → 3/6), ❌ over-fits "
+            "rag_datasheet (51 → 48/78), ❌ under-trained multihop "
+            "(6/9 → 3/9 at 2 epochs). Voice transferred cleanly "
+            "(152 char, matches 14B v4 sweet spot). Customer rule: "
+            "do NOT apply v4 recipe at 32B with 6.5K-example corpus "
+            "unless you weight refusal-calibration ≥ 3× capability-"
+            "headline. ~$15-25 H100 cost."
         ),
     },
     # ─────────────────────────────────────────────────────────────────
@@ -849,7 +991,7 @@ MODELS: dict[str, dict] = {
         "perf_reference_only": True,
     },
     "qwen2.5-32b-q4-dense": {
-        "display_name": "Qwen 2.5 32B Instruct Q4_K_M (dense — perf reference)",
+        "display_name": "Qwen 2.5 32B Instruct Q4_K_M (apples-to-apples 32B base)",
         "family": "qwen2.5",
         "base_model": "Qwen 2.5 32B Instruct (stock)",
         "is_moe": False,
@@ -865,7 +1007,30 @@ MODELS: dict[str, dict] = {
         "ctx_len_trained": 32768,
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
-        "perf_reference_only": True,
+        # Promoted from perf-reference-only after [docs] 2026-05-07 12:44
+        # provided v2+RAG eval data — apples-to-apples baseline for the
+        # 32B v4 fine-tune. Notable base-model behavior: 6/9 refusal
+        # (fabricates made_up_peripheral 3/9) — same fabrication
+        # pattern that 14B v4 inherited and amplified. Conversely, 6/6
+        # numerical_precision (PERFECT — the only entry with that).
+        # Per [docs] 12:44: source acc_baseline-qwen2.5-32b-instruct-...
+        "training": "public_stock",
+        "pass_rate": 0.682,
+        "pass_n_passes": 90,
+        "pass_n_total": 132,
+        "category_deltas": {},  # raw rates per [docs] 12:44 (dict-of-dicts shape)
+        "accuracy_bullet": (
+            "**Apples-to-apples 32B base** for the Skippy 32B v4 trade "
+            "analysis. Notable base-model behaviors: 6/6 numerical_"
+            "precision (PERFECT — only entry with that), and the same "
+            "made_up_peripheral fabrication (3/9) that 14B v4 inherits "
+            "and amplifies. Both 32B v4 fine-tune attempts (3-ep + 2-ep "
+            "CLEAN) regress 4.6pp vs this baseline by trading ~9 "
+            "capability points for ~3 safety points (refusal "
+            "calibration). Customer rule: don't apply v4 recipe at 32B "
+            "with 6.5K-example corpus unless refusal-calibration weight "
+            "≥ 3× capability-headline."
+        ),
     },
     "qwen2.5-32b-q5-dense": {
         "display_name": "Qwen 2.5 32B Instruct Q5_K_M (dense — perf reference)",

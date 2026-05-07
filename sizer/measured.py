@@ -117,6 +117,28 @@ def _attach_perf_reference_anchors() -> None:
 _attach_perf_reference_anchors()
 
 
+def _override_14b_q4_5090_with_fresh_eval() -> None:
+    """Override the 14B Q4 5090 cell with [docs] 2026-05-07 10:18
+    fresh-eval numbers (132-sample v2-RAG telemetry: median 125.7 tok/s
+    decode, 5117 tok/s prefill). The bundle's earlier 102.2 / 3905 came
+    from a different (smaller-sample) measurement context. Cross-app
+    convergence with keyhole-sizer (which shipped 125.7 in 559050c)
+    + alignment with the 0.727 v2-RAG eval that produced these as
+    aggregate telemetry. Override applies across all 5 PAI workloads
+    since dense decode is roughly prompt-invariant (same property as
+    the perf-reference cells in _attach_perf_reference_anchors)."""
+    from .npu_model import RTX_5090_REFERENCE
+    cell_14b = (RTX_5090_REFERENCE.measured_llm or {}).get(
+        "qwen2.5-14b-q4-dense", {})
+    for wid in cell_14b:
+        cell_14b[wid] = dict(cell_14b[wid])
+        cell_14b[wid]["decode_tok_s"] = 125.7
+        cell_14b[wid]["prefill_tok_s"] = 5117.0
+
+
+_override_14b_q4_5090_with_fresh_eval()
+
+
 # Phase 2 anchor validation — once measured_llm is populated, run the
 # [backend] anchor list to catch silent regressions in override math,
 # tier_family taxonomy, or BW-scaling. Fail-loud at import.
