@@ -1009,6 +1009,85 @@ MODELS: dict[str, dict] = {
         ),
     },
     # ─────────────────────────────────────────────────────────────────
+    # Cross-family baseline — Meta Llama-3.1 8B Instruct.
+    # Per [docs] 2026-05-07 22:28. Tier 3 cross-family validation #1:
+    # tests whether v4 recipe gains are a recipe property or a Qwen-
+    # family base property. Result: stock baseline at 56.8% is ~10.6pp
+    # weaker than Qwen2.5-7B at similar size. Reasoning is 1/6
+    # (catastrophic vs Qwen's 6/6); 18× trailing-question rate breaks
+    # Kyle voice gate immediately. Customer-template rule: don't assume
+    # v4 gains transfer to non-Qwen bases without a fresh baseline.
+    #
+    # Llama-3.1 fine-tune attempt was BLOCKED — Meta-Llama is HF-gated;
+    # Kyle's account doesn't have access. [docs] pivoted to Mistral-7B-
+    # Instruct-v0.3 (ungated, similar size, different family). Mistral
+    # baseline + v4 FT eta ~3-4h on local 5090.
+    #
+    # No measurement_alias — [docs] explicitly flagged "no existing
+    # perf cell, treat as eval-data-only OR run a new bake-off".
+    # Without an alias, project_llm falls through to cross_class
+    # two-floor MAX(BW, compute) for every tier — first-principles
+    # physics from architecture (active_params × bytes_per_param /
+    # effective_BW, gops/tok / effective_TOPS × util). Honest about
+    # lack of measurement; UI shows 🟠 cross_class on every tier
+    # (except Mid which gates 🔴 dtype_mismatch since fp16-runtime
+    # Q4_K_M can't execute on Mid's INT8-only silicon).
+    "llama-3-1-8b-q4-dense": {
+        "display_name": "Meta Llama-3.1 8B Instruct (cross-family baseline, Q4_K_M)",
+        "family": "llama-3",
+        "base_model": "Meta Llama-3.1 8B Instruct",
+        "is_moe": False,
+        "total_params": 8_030_000_000,
+        "active_params": 8_030_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_900_000_000,  # rough; bartowski Q4_K_M GGUF
+        "hidden_dim": 4096,
+        "num_layers": 32,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,  # Llama-3 GQA
+        "vocab_size": 128256,  # Llama-3 tokenizer
+        "ctx_len_trained": 131072,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        # Per [docs] 2026-05-07 22:28. Source: bartowski's
+        # Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf (mirror).
+        "training": "public_stock",
+        "pass_rate": 0.568,
+        "pass_n_passes": 75,
+        "pass_n_total": 132,
+        # Notable: 🔴 reasoning 1/6 (catastrophic — Qwen bases all 6/6),
+        # 🔴 rag_datasheet 45/78 (vs Qwen2.5-7B's 54/78), 🟢 rag_email
+        # 1/3 (small lift over Qwen2.5-7B's 0/3), 🔴 refusal 6/9 (same
+        # made_up_peripheral fabrication pattern as Qwen2.5-32B base).
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  4, "n":  6, "rate": 0.667},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 45, "n": 78, "rate": 0.577},
+            "rag_email":           {"pass":  1, "n":  3, "rate": 0.333},
+            "reasoning":           {"pass":  1, "n":  6, "rate": 0.167},  # ⚠️ catastrophic
+            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+        },
+        "accuracy_bullet": (
+            "**Cross-family baseline** (Tier 3 #1 partial result — "
+            "Llama fine-tune blocked by HF gating; [docs] pivoted to "
+            "Mistral-7B-Instruct-v0.3). Materially weaker than Qwen-"
+            "family bases at similar size: −10.6pp vs Qwen2.5-7B-"
+            "Instruct (0.568 vs 0.674). Reasoning 1/6 (vs Qwen's 6/6) "
+            "is the structural weakness — chained logical reasoning "
+            "specifically. Same made_up_peripheral fabrication issue "
+            "as Qwen2.5-32B base (refusal 6/9). Voice profile differs "
+            "sharply — 18× the trailing-question rate vs any Qwen "
+            "base, breaks Kyle voice gate immediately. **Customer "
+            "rule:** don't assume v4 recipe gains transfer to non-"
+            "Qwen bases without a fresh baseline. Reasoning capability "
+            "varies wildly between vendors at similar parameter "
+            "count."
+        ),
+    },
+    # ─────────────────────────────────────────────────────────────────
     # Performance-comparison reference entries — Qwen 2.5 7B + 32B dense
     # (per [docs] 2026-05-01 20:55 spec mirroring keyhole-sizer's 7503f0c
     # / 66edfa2). NOT replacements for the production reference; surfaced
