@@ -1063,9 +1063,13 @@ MODELS: dict[str, dict] = {
         # 🔴 rag_datasheet 45/78 (vs Qwen2.5-7B's 54/78), 🟢 rag_email
         # 1/3 (small lift over Qwen2.5-7B's 0/3), 🔴 refusal 6/9 (same
         # made_up_peripheral fabrication pattern as Qwen2.5-32B base).
+        # Per [docs] 2026-05-08 09:45 — refreshed from newer eval (10-cat
+        # incl. persona; persona dropped here to match 9-cat catalog
+        # convention per [sizer] 10:00). general expanded n=3 → n=6 in
+        # the newer eval set; pass count unchanged (3) but rate now 0.500.
         "category_deltas": {
             "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
+            "general":             {"pass":  3, "n":  6, "rate": 0.500},
             "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
             "numerical_precision": {"pass":  4, "n":  6, "rate": 0.667},
             "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
@@ -1125,13 +1129,21 @@ MODELS: dict[str, dict] = {
         "pass_rate": 0.606,
         "pass_n_passes": 80,
         "pass_n_total": 132,
-        # Per-category data partial — [docs] 09:01 mentioned:
-        # - 0-1/6 reasoning (vs Qwen 6/6) — chain-of-thought training Qwen ships
-        # - 6/9 refusal (made_up_peripheral fabrication — same as Llama / Qwen 32B base)
-        # - persona 0/6 (across all stock bases — voice gate is fine-tune-deliverable)
-        # Full per-category breakdown asked in 09:50 broadcast — populating
-        # when [docs] returns from heads-down deck builder (~10:19+).
-        "category_deltas": {},
+        # Per [docs] 2026-05-08 09:45 full payload (acc_baseline-mistral-
+        # 7b-instruct-v0.3-v2-rag_20260507-224742.json). Persona dropped
+        # to match 9-cat catalog convention per [sizer] 10:00 alignment.
+        # Sum reconciles: 6+3+6+3+3+53+0+0+6 = 80 → pass_rate 0.606.
+        "category_deltas": {
+            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
+            "general":             {"pass":  3, "n":  6, "rate": 0.500},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":       {"pass": 53, "n": 78, "rate": 0.679},
+            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":           {"pass":  0, "n":  6, "rate": 0.000},  # ⚠️ catastrophic
+            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+        },
         "accuracy_bullet": (
             "**Cross-family baseline #2** (Mistral 7B v0.3 Instruct stock). "
             "Tier 3 #1 fall-back model after Llama-3.1 fine-tune was "
@@ -1149,6 +1161,78 @@ MODELS: dict[str, dict] = {
             "budget, different quality outcome at the same size. "
             "Choosing 7B-class base is a quality decision, not a perf "
             "decision (170-185 tok/s on 5090 across all 7B-class)."
+        ),
+    },
+    # Mistral v4 FT — first cross-family fine-tune. Per [docs] 2026-05-08
+    # 09:56. **REGRESSED** −3.8pp vs stock Mistral baseline (60.6% →
+    # 56.8%). New customer-template finding: recipe transfer is base-
+    # family-coupled, not just architecture-coupled. Same recipe + same
+    # 6,517-example corpus + same hyperparams produced +3.1pp on Qwen
+    # 7B base, −3.8pp on Mistral 7B base. Refusal/rag_email/numerical_
+    # precision lifts confirmed (recipe gains transfer); but recipe
+    # actively damages retrieval (rag_datasheet −8, rag_blog −3) and
+    # coding (−3) on Mistral specifically.
+    #
+    # GGUF identical to stock (4.37 GB, same compute graph) — alias
+    # unchanged: mistral_7b_v03_dense → 5090 perf 182.7 tok/s carries.
+    "mistral-7b-v0-3-v4-q4-dense": {
+        "display_name": "Mistral 7B v0.3 Skippy v4 (cautionary cross-family, Q4_K_M)",
+        "family": "mistral",
+        "base_model": "Mistral-7B-Instruct-v0.3",
+        "is_moe": False,
+        "total_params": 7_250_000_000,
+        "active_params": 7_250_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_370_000_000,
+        "hidden_dim": 4096,
+        "num_layers": 32,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,
+        "vocab_size": 32768,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        # FT preserves base arch + GGUF size + compute graph — same
+        # 5090 anchor as stock Mistral per [backend] 23:08 + [docs]
+        # 09:41 alias decision.
+        "measurement_alias": "mistral_7b_v03_dense",
+        # v2+RAG eval per [docs] 2026-05-08 09:56. Source: acc_candidate-
+        # kyle-mistral-7b-v4_20260508-095500.json. Persona dropped to
+        # match 9-cat catalog. Sum reconciles: 3+3+6+6+0+45+3+0+9 = 75
+        # → pass_rate 0.568.
+        "training": "skippy_finetune_v4",
+        "pass_rate": 0.568,
+        "pass_n_passes": 75,
+        "pass_n_total": 132,
+        "category_deltas": {
+            "coding":              {"pass":  3, "n":  6, "rate": 0.500},  # ⚠️ −3 vs stock
+            "general":             {"pass":  3, "n":  6, "rate": 0.500},
+            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ +3 vs stock
+            "rag_blog":            {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ −3 vs stock
+            "rag_datasheet":       {"pass": 45, "n": 78, "rate": 0.577},  # ⚠️ −8 vs stock
+            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},  # ✅ +3 vs stock
+            "reasoning":           {"pass":  0, "n":  6, "rate": 0.000},  # flat (base reasoning-weak)
+            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},  # ✅ +3 vs stock
+        },
+        "accuracy_bullet": (
+            "**First cross-family fine-tune — REGRESSED −3.8pp vs stock "
+            "Mistral baseline** (0.606 → 0.568). Same v4 recipe + same "
+            "6,517-example corpus that produced +3.1pp on Qwen 7B v4. "
+            "**Recipe transfer is base-family-coupled** (new finding) — "
+            "not just architecture-coupled. Recipe gains DO transfer "
+            "qualitatively: refusal +3 (6/9 → 9/9), rag_email +3 (0/3 "
+            "→ 3/3), numerical_precision +3 (3/6 → 6/6 — better than "
+            "Qwen v4's flat). But recipe actively damages retrieval on "
+            "Mistral specifically: rag_datasheet −8 (53 → 45/78), "
+            "rag_blog −3 (3/3 → 0/3 NEW regression), coding −3 (6/6 → "
+            "3/6 — Qwen v4 held at 6/6). Hypothesis (untested): "
+            "Mistral's required {{% generation %}} chat-template patch "
+            "+ assistant_only_loss combination reweights away from RAG-"
+            "following more than it did Qwen2.5. Customer rule: don't "
+            "assume v4 recipe gains transfer to non-Qwen bases without "
+            "fresh validation; the qualitative gains transfer (safety "
+            "categories) but capability cost varies wildly by base."
         ),
     },
     # ─────────────────────────────────────────────────────────────────
