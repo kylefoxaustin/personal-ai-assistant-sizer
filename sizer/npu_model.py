@@ -1040,7 +1040,7 @@ MODELS: dict[str, dict] = {
         "total_params": 8_030_000_000,
         "active_params": 8_030_000_000,
         "bytes_per_param": 0.57,
-        "gguf_bytes": 4_900_000_000,  # rough; bartowski Q4_K_M GGUF
+        "gguf_bytes": 4_920_000_000,  # bartowski Q4_K_M GGUF — [backend] 23:08 measured
         "hidden_dim": 4096,
         "num_layers": 32,
         "num_attention_heads": 32,
@@ -1049,6 +1049,10 @@ MODELS: dict[str, dict] = {
         "ctx_len_trained": 131072,
         "compute_dtype": "fp16",
         "quant_scheme": "Q4_K_M",
+        # Wired to [backend] 2026-05-07 23:08 5090 bake-off (171.0 tok/s
+        # decode, 10162 prefill). Replaces cross_class 332.79 over-
+        # projection (1.95× off — see methodology callout in deck).
+        "measurement_alias": "llama_3_1_8b_dense",
         # Per [docs] 2026-05-07 22:28. Source: bartowski's
         # Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf (mirror).
         "training": "public_stock",
@@ -1085,6 +1089,66 @@ MODELS: dict[str, dict] = {
             "Qwen bases without a fresh baseline. Reasoning capability "
             "varies wildly between vendors at similar parameter "
             "count."
+        ),
+    },
+    # Mistral 7B v0.3 Instruct — cross-family baseline #2.
+    # Per [docs] 2026-05-08 09:01. After Llama fine-tune blocked (HF
+    # gated), [docs] pivoted to Mistral (ungated, similar size,
+    # different family from both Qwen and Llama). Stock baseline =
+    # 60.6%; v4 fine-tune NOT YET TRAINED — open-cell Tier 3 in the
+    # recipe taxonomy. When v4 lands, alias still maps to
+    # mistral_7b_v03_dense (FT preserves base arch + size, 5090 anchor
+    # carries directly per [backend] 23:08 + [docs] 09:19 confirmation).
+    "mistral-7b-v0-3-q4-dense": {
+        "display_name": "Mistral 7B Instruct v0.3 (cross-family baseline, Q4_K_M)",
+        "family": "mistral",
+        "base_model": "Mistral-7B-Instruct-v0.3",
+        "is_moe": False,
+        "total_params": 7_250_000_000,  # per [backend] 23:08 bake-off metadata
+        "active_params": 7_250_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_370_000_000,  # 4.37 GB per [backend] 23:08
+        "hidden_dim": 4096,
+        "num_layers": 32,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,  # Mistral v0.3 uses GQA
+        "vocab_size": 32768,  # Mistral tokenizer (v3 vocabulary)
+        "ctx_len_trained": 32768,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        # Wired to [backend] 2026-05-07 23:08 5090 bake-off (182.7 tok/s
+        # decode, 10217 prefill, RAG total 12.556s). Stock anchor; v4 FT
+        # alias maps to same key when it lands.
+        "measurement_alias": "mistral_7b_v03_dense",
+        # v2+RAG eval @ 5090 per [docs] 2026-05-08 09:01.
+        "training": "public_stock",
+        "pass_rate": 0.606,
+        "pass_n_passes": 80,
+        "pass_n_total": 132,
+        # Per-category data partial — [docs] 09:01 mentioned:
+        # - 0-1/6 reasoning (vs Qwen 6/6) — chain-of-thought training Qwen ships
+        # - 6/9 refusal (made_up_peripheral fabrication — same as Llama / Qwen 32B base)
+        # - persona 0/6 (across all stock bases — voice gate is fine-tune-deliverable)
+        # Full per-category breakdown asked in 09:50 broadcast — populating
+        # when [docs] returns from heads-down deck builder (~10:19+).
+        "category_deltas": {},
+        "accuracy_bullet": (
+            "**Cross-family baseline #2** (Mistral 7B v0.3 Instruct stock). "
+            "Tier 3 #1 fall-back model after Llama-3.1 fine-tune was "
+            "blocked by HF gating — [docs] pivoted to Mistral (ungated, "
+            "different family from both Qwen and Llama). −6.8pp vs "
+            "Qwen2.5-7B-Instruct (0.606 vs 0.674) — middle of the "
+            "cross-family spread (Qwen 67.4% > Mistral 60.6% > Llama "
+            "56.8%). Same made_up_peripheral fabrication issue as Llama "
+            "and Qwen2.5-32B base (refusal 6/9). Reasoning ~0-1/6 — "
+            "the 'chain-of-thought training Qwen ships' shows up at "
+            "this category (Qwen bases consistently 6/6 there). v4 "
+            "fine-tune NOT yet trained; when it lands the 5090 anchor "
+            "carries directly via the same alias. **Customer rule:** "
+            "stock-base quality is NOT family-invariant — same hardware "
+            "budget, different quality outcome at the same size. "
+            "Choosing 7B-class base is a quality decision, not a perf "
+            "decision (170-185 tok/s on 5090 across all 7B-class)."
         ),
     },
     # ─────────────────────────────────────────────────────────────────

@@ -139,6 +139,59 @@ def _override_14b_q4_5090_with_fresh_eval() -> None:
 _override_14b_q4_5090_with_fresh_eval()
 
 
+def _attach_cross_family_5090_anchors() -> None:
+    """Attach RTX 5090 measurements for the cross-family Llama-3.1 8B
+    + Mistral 7B v0.3 entries. Per [backend] 2026-05-07 23:08 bake-off
+    using bakeoff_llm_anchors.py (llama-cpp-python, llama_cpp 0.3.20,
+    n_ctx=16384, RAG 8K+2K shape).
+
+    Both 7B-class dense Q4_K_M models cluster in the 170-185 tok/s
+    band on 5090 — base architecture-class is BW-equivalent within
+    ~7%. Differences track GGUF size (BW cost) not vendor / family.
+
+    Cross-class fallback projected Llama-3.1 at 332.79 tok/s on 5090
+    (1.95× over-projection). Wiring measurement_alias to these cells
+    replaces the 🟠 cross_class fallback with 🟢 measured ground
+    truth on the affected rows.
+
+    Registered under all 5 PAI workload_ids (decode + prefill are
+    roughly prompt-invariant on dense Q4_K_M, same convention as the
+    other perf-reference entries).
+    """
+    from .npu_model import RTX_5090_REFERENCE
+    measured = RTX_5090_REFERENCE.measured_llm or {}
+    workloads = ("short_chat", "rag_qa", "long_decode",
+                  "meeting_summarization", "agentic_roundtrip")
+    cross_family_anchors = {
+        # Llama-3.1 8B Q4_K_M @ RAG 8K+2K — 5090 measured
+        "llama_3_1_8b_dense": {
+            "decode_tok_s":  171.0,
+            "prefill_tok_s": 10162.0,
+        },
+        # Mistral-7B-Instruct-v0.3 Q4_K_M — 5090 measured
+        "mistral_7b_v03_dense": {
+            "decode_tok_s":  182.7,
+            "prefill_tok_s": 10217.0,
+        },
+    }
+    for model_key, anchors in cross_family_anchors.items():
+        if model_key not in measured:
+            measured[model_key] = {}
+        for wid in workloads:
+            measured[model_key][wid] = {
+                "decode_tok_s":  anchors["decode_tok_s"],
+                "prefill_tok_s": anchors["prefill_tok_s"],
+                "ttft_s":        None,
+                "host_ms":       0.0,
+                "prompt_tokens_p50":     8000,
+                "completion_tokens_p50": 2000,
+            }
+    RTX_5090_REFERENCE.measured_llm = measured
+
+
+_attach_cross_family_5090_anchors()
+
+
 # Phase 2 anchor validation — once measured_llm is populated, run the
 # [backend] anchor list to catch silent regressions in override math,
 # tier_family taxonomy, or BW-scaling. Fail-loud at import.
