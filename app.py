@@ -141,241 +141,14 @@ with st.sidebar:
                 f"({_ref_short})"
             )
 
-        with st.expander("📊 Accuracy details"):
-            st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
-            st.markdown("---")
-            st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
-            _catalog_rows: list[dict] = []
-            for _k, _m in MODELS.items():
-                if "pass_rate" not in _m:
-                    continue
-                _row_delta = (_m["pass_rate"] - _production_model["pass_rate"]) * 100.0
-                _row_delta_str = (
-                    "—  (reference)" if _k == PRODUCTION_REFERENCE_KEY
-                    else f"{('+' if _row_delta >= 0 else '')}{_row_delta:.1f}pp"
-                )
-                _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
-                _catalog_rows.append({
-                    "Model":            _row_label,
-                    "Base":             _m.get("base_model", "—"),
-                    "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
-                    "Δ vs production":  _row_delta_str,
-                    "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
-                    "Training":         _m.get("training", "—"),
-                })
-            st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
-            # Sister-model confound caveat per [docs] 2026-05-05 09:45
-            # base-identity audit: the "Δ vs production" column compares
-            # rows with potentially different base models. Skippy MoE FT
-            # was trained on Qwen3-30B-A3B-Instruct-2507; the Thinking-2507
-            # row is its sister model (different base, not a fine-tune-vs-
-            # base measurement). Apples-to-apples fine-tune gain anchors
-            # are the dense Qwen 2.5 fine-tunes (validated +3.1pp / +5.3pp
-            # vs respective Instruct bases on 7B / 14B).
-            st.caption(
-                "**Read the Base column carefully.** Δ values between rows "
-                "with different bases mix two factors: (a) base architecture "
-                "differences and (b) training differences. The Δ between "
-                "the Skippy MoE FT row (Instruct-2507 base) and the "
-                "Thinking-2507 stock row is a *sister-model* comparison — "
-                "not a fine-tune-vs-base measurement. Apples-to-apples "
-                "fine-tune gains are validated on dense Qwen 2.5 (7B v4 "
-                "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
-                "MoE-base validation pending an MoE-aware LoRA recipe."
-            )
-
-            # Per-category breakdown rendering — handles two schemas:
-            # (a) dict-of-dicts (Tier 3 schema, 2026-05-07): each entry
-            #     is {"pass": N, "n": total, "rate": fraction}. Renders
-            #     raw counts + Δ vs production where production also has
-            #     dict-of-dicts data. This is the preferred shape going
-            #     forward.
-            # (b) signed-int (legacy): each entry is a signed delta vs
-            #     OLD production reference. Renders as before. Surviving
-            #     legacy entries are flagged as awaiting migration.
-            _cat_deltas = _selected_model.get("category_deltas") or {}
-            _has_rich = any(isinstance(v, dict) for v in _cat_deltas.values())
-            _has_legacy_int = any(isinstance(v, (int, float))
-                                   for v in _cat_deltas.values())
-
-            if _has_rich:
-                # Dict-of-dicts. Show this model's raw counts + Δ vs
-                # production where production has matching data.
-                _ref_short = _production_model["display_name"].split(" (")[0]
-                _prod_cats = _production_model.get("category_deltas") or {}
-                _prod_has_rich = any(isinstance(v, dict)
-                                      for v in _prod_cats.values())
-                if _prod_has_rich:
-                    st.markdown(
-                        f"**Per-category breakdown** (raw rates; Δ vs "
-                        f"production = {_ref_short}):"
-                    )
-                else:
-                    st.markdown(
-                        "**Per-category breakdown** (raw rates; production "
-                        "ref is missing per-category data — Δ unavailable):"
-                    )
-                for cat, cat_data in _cat_deltas.items():
-                    cat_label = CATEGORY_LABELS.get(cat, cat)
-                    p, n = cat_data["pass"], cat_data["n"]
-                    rate_pct = cat_data["rate"] * 100.0
-                    line = (f"- {cat_label}: **{p}/{n}** "
-                            f"({rate_pct:.1f}%)")
-                    prod_cat = _prod_cats.get(cat)
-                    if isinstance(prod_cat, dict):
-                        d_passes = p - prod_cat["pass"]
-                        sign = "+" if d_passes >= 0 else ""
-                        line += f" — Δ vs prod: **{sign}{d_passes} passes**"
-                    st.markdown(line)
-                st.caption(
-                    "Per-category data from [docs] eval JSONs (132-sample "
-                    "v2-RAG, RAG on, deterministic temp=0). Δ vs production "
-                    "computed at render time from raw counts."
-                )
-            elif _has_legacy_int:
-                # Legacy signed-int delta-vs-production schema.
-                _ref_short = _production_model["display_name"].split(" (")[0]
-                st.markdown(
-                    f"**Per-category Δ vs production** ({_ref_short}, "
-                    f"positive = this model wins):"
-                )
-                for cat, dp in _cat_deltas.items():
-                    cat_label = CATEGORY_LABELS.get(cat, cat)
-                    sign = "+" if dp >= 0 else ""
-                    st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
-                st.caption(
-                    "⚠️ Legacy schema (signed-int delta). Awaiting migration "
-                    "to dict-of-dicts raw rates. Categories not listed are "
-                    "flat ±0 vs the original production reference."
-                )
-            elif _is_production:
-                st.caption(
-                    "Production reference — per-category Δ is zero against "
-                    "itself. Switch the selector above to see breakdowns "
-                    "for the alternative entries."
-                )
-            else:
-                # Entry has empty category_deltas — pending [docs] data
-                st.caption(
-                    "Per-category breakdown not yet populated for this "
-                    "entry. (Awaiting eval-side per-category data from "
-                    "[docs] for older catalog entries.)"
-                )
-
-            # Eval methodology section — per [docs] 2026-05-11 09:31
-            # white paper Finding 4 closure (semantic-regrade campaign:
-            # 33 catalog entries regraded via GPT-4o binary semantic
-            # judge; substring shown to be Qwen-family-biased). Reviewer's
-            # framing: 'the Qwen-family format bias finding is, in my
-            # read, the single most valuable methodology output of this
-            # entire campaign — more valuable than gotcha #7, more
-            # valuable than the two-factor model'.
-            st.markdown("---")
-            st.markdown("**📐 Eval methodology — Finding 4: Qwen-family format bias (semantic regrade)**")
-            st.markdown(
-                "The headline pass-rate numbers above now use **semantic "
-                "grading** (GPT-4o binary semantic judge, 132-sample "
-                "v2-RAG, deterministic temp=0) per [docs] 2026-05-11 "
-                "white paper Finding 4. Substring grading is retained "
-                "only for the 2 entries where _semantic.json was not "
-                "produced (qwen3-30b-a3b-q4-moe, qwen2.5-14b-q4-dense — "
-                "both flagged in their accuracy_bullet)."
-            )
-            st.markdown("**Why the headline switched** — the production model's substring-headline-lift eroded across five successive cross-checks:")
-            st.markdown(
-                "| # | Cross-check | Result |\n"
-                "|---|---|---|\n"
-                "| 1 | Substring (original headline) | **+3.1pp** vs base |\n"
-                "| 2 | LLM-judge (Sonnet 4.6) | **−0.35** |\n"
-                "| 3 | Temperature=0.3 substring | **−29.3pp** |\n"
-                "| 4 | Cross-judge (GPT-4o) | **−0.69** |\n"
-                "| 5 | **Semantic regrade** (132-sample binary) | **−4.6pp** (sign reversal) |"
-            )
-            st.markdown(
-                "**Finding 4 (verbatim, [docs] 2026-05-11 white paper):** "
-                "*'The recipe's value is voice transfer and safety "
-                "calibration, not capability lift; the substring-headline-"
-                "capability gain on this corpus was a format-fidelity "
-                "artifact specific to Qwen-shaped phrasings in the "
-                "training data.'*"
-            )
-            st.markdown("**Substring is biased — per-family regrade Δ** (33-entry catalog, semantic minus substring):")
-            st.markdown(
-                "| Family | Regrade Δ direction | Interpretation |\n"
-                "|---|---|---|\n"
-                "| Qwen-family fine-tunes | **−3.2 to −12.7pp** | Substring over-graded (gold tokens are Qwen-shaped) |\n"
-                "| Non-Qwen stock bases (Gemma/Llama/Mistral) | **+1.6 to +6.0pp** | Substring under-graded |\n"
-                "| Gemma 9B v4 (cross-family) | +5.4pp | Only cross-family FT that lifts under both graders |\n"
-                "| Mistral/Llama/Yi v4 | flat-to-down | Substring direction confirmed |"
-            )
-            st.markdown("**Two-factor model — partially falsified by semantic regrade:**")
-            st.markdown(
-                "> Original (substring): *'Lift requires either ceiling "
-                "stock reasoning (6/6) OR family-match.'*  \n"
-                "> Refined (semantic): *'Substring lift requires either "
-                "ceiling reasoning OR family-match. Semantic lift "
-                "requires either ceiling reasoning OR Qwen-14B "
-                "specifically. The production 7B v4 lifts on substring "
-                "but not on semantic — its apparent capability gain "
-                "was largely format-fidelity matching trained Qwen "
-                "phrasings.'*"
-            )
-            st.markdown("**Customer guidance** (reviewer's adopted wording, recipe-taxonomy.md):")
-            st.markdown(
-                "> *'Substring grading on this corpus is biased toward "
-                "Qwen-family fine-tunes due to gold-token format-match. "
-                "Under semantic regrade, only the ceiling-reasoning gate "
-                "produces consistent lifts (Gemma 9B at 6/6 still "
-                "lifts; Qwen 14B at 3/6 still lifts but smaller; Qwen "
-                "7B at 6/6 reverses to regression). Customers running "
-                "this recipe on their own corpus should expect "
-                "substring lifts on family-matched FTs to be partially "
-                "or fully format-fidelity artifact, and should "
-                "semantic-grade by default.'*"
-            )
-            st.markdown("**Standing methodology** — durable, transfers across corpora:")
-            st.markdown(
-                "> *'Substring grading is reliable for base-vs-base "
-                "comparisons but unreliable for FT-vs-base comparisons "
-                "when the corpus phrasings come from one model family. "
-                "Customers running cross-family campaigns should "
-                "validate substring with semantic grading before "
-                "drawing FT-lift conclusions.'*"
-            )
-            st.markdown(
-                "**Production decision unaffected.** The Skippy 7B v4 "
-                "ship decision is anchored on the **three-gate framework** "
-                "(capability + voice + safety) — substring was never the "
-                "load-bearing signal. Voice and safety carried the real "
-                "signal; substring failed silently. This is exactly the "
-                "scenario the three-gate framework was designed for."
-            )
-
-            # Methodology-version footnote — mirrors keyhole-sizer 7c58b59.
-            # Reads the label stamped into sizer/sizer_bundle.json's meta
-            # block (re-vendored as commit be1a2f4 from [docs]'s
-            # personal-ai-framework 05b79d0). One-field-read answer to
-            # "are these anchors from the substring-headline era or the
-            # semantic-headline era?" — no git archaeology required.
-            _mv = get_bundle_summary()["bundle_meta"].get(
-                "methodology_version", "unstamped"
-            )
-            st.caption(
-                f"📐 Eval methodology snapshot: `{_mv}` "
-                "(stamped in `sizer_bundle.json` meta; cross-app lockstep "
-                "with keyhole-sizer + personal-ai-framework)."
-            )
-
-            st.markdown(
-                "---\n"
-                "**Why this matters for sizing:** model choice on the same "
-                "Q4_K_M MoE 30B/3B-active architecture is a pure quality-vs-quality "
-                "trade — decode tok/s is identical across same-arch entries (BW-bound "
-                "physics doesn't care which weights are in the file). The "
-                "**dense entry** has a different architecture (Qwen 2.5 14B), "
-                "so its perf differs: 5× more bytes per decoded token → "
-                "~5× lower tok/s at the same tier. Cost trade, not capability."
-            )
+        # Accuracy details expander moved out of sidebar 2026-05-11 —
+        # sidebar's ~200px column was mangling the Finding 4 methodology
+        # tables (5-checkpoint headline-erosion table + per-family
+        # regrade Δ table). Mirrors keyhole-sizer dd17baa. The expander
+        # now renders in the main pane (~800-1000px) immediately under
+        # the page title. Same conditional logic (pass_rate present AND
+        # not perf-reference-only). See "Accuracy details" expander
+        # after st.title(...) below.
 
     tier_keys = list(TIERS.keys())
     tier_name = st.selectbox(
@@ -609,6 +382,247 @@ st.title(MODELS[model_key]['display_name'])
 st.markdown(f"**Tier:** {tier_name}  &nbsp;·&nbsp;  **Workload:** "
             f"_{WORKLOAD_DEFAULTS[workload_id]['label']}_  &nbsp;·&nbsp;  "
             f"{prompt_tokens:,} prompt / {decode_tokens:,} decode tokens")
+
+# ── Accuracy details — moved here from sidebar 2026-05-11 to give the
+#    Finding 4 methodology tables main-pane width (~800-1000px) instead
+#    of the sidebar's ~200px column, which was chopping table cells
+#    mid-word. Mirrors keyhole-sizer dd17baa.
+if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_only"):
+    with st.expander("📊 Accuracy details"):
+        st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
+        st.markdown("---")
+        st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
+        _catalog_rows: list[dict] = []
+        for _k, _m in MODELS.items():
+            if "pass_rate" not in _m:
+                continue
+            _row_delta = (_m["pass_rate"] - _production_model["pass_rate"]) * 100.0
+            _row_delta_str = (
+                "—  (reference)" if _k == PRODUCTION_REFERENCE_KEY
+                else f"{('+' if _row_delta >= 0 else '')}{_row_delta:.1f}pp"
+            )
+            _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
+            _catalog_rows.append({
+                "Model":            _row_label,
+                "Base":             _m.get("base_model", "—"),
+                "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
+                "Δ vs production":  _row_delta_str,
+                "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
+                "Training":         _m.get("training", "—"),
+            })
+        st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
+        # Sister-model confound caveat per [docs] 2026-05-05 09:45
+        # base-identity audit: the "Δ vs production" column compares
+        # rows with potentially different base models. Skippy MoE FT
+        # was trained on Qwen3-30B-A3B-Instruct-2507; the Thinking-2507
+        # row is its sister model (different base, not a fine-tune-vs-
+        # base measurement). Apples-to-apples fine-tune gain anchors
+        # are the dense Qwen 2.5 fine-tunes (validated +3.1pp / +5.3pp
+        # vs respective Instruct bases on 7B / 14B).
+        st.caption(
+            "**Read the Base column carefully.** Δ values between rows "
+            "with different bases mix two factors: (a) base architecture "
+            "differences and (b) training differences. The Δ between "
+            "the Skippy MoE FT row (Instruct-2507 base) and the "
+            "Thinking-2507 stock row is a *sister-model* comparison — "
+            "not a fine-tune-vs-base measurement. Apples-to-apples "
+            "fine-tune gains are validated on dense Qwen 2.5 (7B v4 "
+            "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
+            "MoE-base validation pending an MoE-aware LoRA recipe."
+        )
+
+        # Per-category breakdown rendering — handles two schemas:
+        # (a) dict-of-dicts (Tier 3 schema, 2026-05-07): each entry
+        #     is {"pass": N, "n": total, "rate": fraction}. Renders
+        #     raw counts + Δ vs production where production also has
+        #     dict-of-dicts data. This is the preferred shape going
+        #     forward.
+        # (b) signed-int (legacy): each entry is a signed delta vs
+        #     OLD production reference. Renders as before. Surviving
+        #     legacy entries are flagged as awaiting migration.
+        _cat_deltas = _selected_model.get("category_deltas") or {}
+        _has_rich = any(isinstance(v, dict) for v in _cat_deltas.values())
+        _has_legacy_int = any(isinstance(v, (int, float))
+                               for v in _cat_deltas.values())
+
+        if _has_rich:
+            # Dict-of-dicts. Show this model's raw counts + Δ vs
+            # production where production has matching data.
+            _ref_short = _production_model["display_name"].split(" (")[0]
+            _prod_cats = _production_model.get("category_deltas") or {}
+            _prod_has_rich = any(isinstance(v, dict)
+                                  for v in _prod_cats.values())
+            if _prod_has_rich:
+                st.markdown(
+                    f"**Per-category breakdown** (raw rates; Δ vs "
+                    f"production = {_ref_short}):"
+                )
+            else:
+                st.markdown(
+                    "**Per-category breakdown** (raw rates; production "
+                    "ref is missing per-category data — Δ unavailable):"
+                )
+            for cat, cat_data in _cat_deltas.items():
+                cat_label = CATEGORY_LABELS.get(cat, cat)
+                p, n = cat_data["pass"], cat_data["n"]
+                rate_pct = cat_data["rate"] * 100.0
+                line = (f"- {cat_label}: **{p}/{n}** "
+                        f"({rate_pct:.1f}%)")
+                prod_cat = _prod_cats.get(cat)
+                if isinstance(prod_cat, dict):
+                    d_passes = p - prod_cat["pass"]
+                    sign = "+" if d_passes >= 0 else ""
+                    line += f" — Δ vs prod: **{sign}{d_passes} passes**"
+                st.markdown(line)
+            st.caption(
+                "Per-category data from [docs] eval JSONs (132-sample "
+                "v2-RAG, RAG on, deterministic temp=0). Δ vs production "
+                "computed at render time from raw counts."
+            )
+        elif _has_legacy_int:
+            # Legacy signed-int delta-vs-production schema.
+            _ref_short = _production_model["display_name"].split(" (")[0]
+            st.markdown(
+                f"**Per-category Δ vs production** ({_ref_short}, "
+                f"positive = this model wins):"
+            )
+            for cat, dp in _cat_deltas.items():
+                cat_label = CATEGORY_LABELS.get(cat, cat)
+                sign = "+" if dp >= 0 else ""
+                st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
+            st.caption(
+                "⚠️ Legacy schema (signed-int delta). Awaiting migration "
+                "to dict-of-dicts raw rates. Categories not listed are "
+                "flat ±0 vs the original production reference."
+            )
+        elif _is_production:
+            st.caption(
+                "Production reference — per-category Δ is zero against "
+                "itself. Switch the selector above to see breakdowns "
+                "for the alternative entries."
+            )
+        else:
+            # Entry has empty category_deltas — pending [docs] data
+            st.caption(
+                "Per-category breakdown not yet populated for this "
+                "entry. (Awaiting eval-side per-category data from "
+                "[docs] for older catalog entries.)"
+            )
+
+        # Eval methodology section — per [docs] 2026-05-11 09:31
+        # white paper Finding 4 closure (semantic-regrade campaign:
+        # 33 catalog entries regraded via GPT-4o binary semantic
+        # judge; substring shown to be Qwen-family-biased). Reviewer's
+        # framing: 'the Qwen-family format bias finding is, in my
+        # read, the single most valuable methodology output of this
+        # entire campaign — more valuable than gotcha #7, more
+        # valuable than the two-factor model'.
+        st.markdown("---")
+        st.markdown("**📐 Eval methodology — Finding 4: Qwen-family format bias (semantic regrade)**")
+        st.markdown(
+            "The headline pass-rate numbers above now use **semantic "
+            "grading** (GPT-4o binary semantic judge, 132-sample "
+            "v2-RAG, deterministic temp=0) per [docs] 2026-05-11 "
+            "white paper Finding 4. Substring grading is retained "
+            "only for the 2 entries where _semantic.json was not "
+            "produced (qwen3-30b-a3b-q4-moe, qwen2.5-14b-q4-dense — "
+            "both flagged in their accuracy_bullet)."
+        )
+        st.markdown("**Why the headline switched** — the production model's substring-headline-lift eroded across five successive cross-checks:")
+        st.markdown(
+            "| # | Cross-check | Result |\n"
+            "|---|---|---|\n"
+            "| 1 | Substring (original headline) | **+3.1pp** vs base |\n"
+            "| 2 | LLM-judge (Sonnet 4.6) | **−0.35** |\n"
+            "| 3 | Temperature=0.3 substring | **−29.3pp** |\n"
+            "| 4 | Cross-judge (GPT-4o) | **−0.69** |\n"
+            "| 5 | **Semantic regrade** (132-sample binary) | **−4.6pp** (sign reversal) |"
+        )
+        st.markdown(
+            "**Finding 4 (verbatim, [docs] 2026-05-11 white paper):** "
+            "*'The recipe's value is voice transfer and safety "
+            "calibration, not capability lift; the substring-headline-"
+            "capability gain on this corpus was a format-fidelity "
+            "artifact specific to Qwen-shaped phrasings in the "
+            "training data.'*"
+        )
+        st.markdown("**Substring is biased — per-family regrade Δ** (33-entry catalog, semantic minus substring):")
+        st.markdown(
+            "| Family | Regrade Δ direction | Interpretation |\n"
+            "|---|---|---|\n"
+            "| Qwen-family fine-tunes | **−3.2 to −12.7pp** | Substring over-graded (gold tokens are Qwen-shaped) |\n"
+            "| Non-Qwen stock bases (Gemma/Llama/Mistral) | **+1.6 to +6.0pp** | Substring under-graded |\n"
+            "| Gemma 9B v4 (cross-family) | +5.4pp | Only cross-family FT that lifts under both graders |\n"
+            "| Mistral/Llama/Yi v4 | flat-to-down | Substring direction confirmed |"
+        )
+        st.markdown("**Two-factor model — partially falsified by semantic regrade:**")
+        st.markdown(
+            "> Original (substring): *'Lift requires either ceiling "
+            "stock reasoning (6/6) OR family-match.'*  \n"
+            "> Refined (semantic): *'Substring lift requires either "
+            "ceiling reasoning OR family-match. Semantic lift "
+            "requires either ceiling reasoning OR Qwen-14B "
+            "specifically. The production 7B v4 lifts on substring "
+            "but not on semantic — its apparent capability gain "
+            "was largely format-fidelity matching trained Qwen "
+            "phrasings.'*"
+        )
+        st.markdown("**Customer guidance** (reviewer's adopted wording, recipe-taxonomy.md):")
+        st.markdown(
+            "> *'Substring grading on this corpus is biased toward "
+            "Qwen-family fine-tunes due to gold-token format-match. "
+            "Under semantic regrade, only the ceiling-reasoning gate "
+            "produces consistent lifts (Gemma 9B at 6/6 still "
+            "lifts; Qwen 14B at 3/6 still lifts but smaller; Qwen "
+            "7B at 6/6 reverses to regression). Customers running "
+            "this recipe on their own corpus should expect "
+            "substring lifts on family-matched FTs to be partially "
+            "or fully format-fidelity artifact, and should "
+            "semantic-grade by default.'*"
+        )
+        st.markdown("**Standing methodology** — durable, transfers across corpora:")
+        st.markdown(
+            "> *'Substring grading is reliable for base-vs-base "
+            "comparisons but unreliable for FT-vs-base comparisons "
+            "when the corpus phrasings come from one model family. "
+            "Customers running cross-family campaigns should "
+            "validate substring with semantic grading before "
+            "drawing FT-lift conclusions.'*"
+        )
+        st.markdown(
+            "**Production decision unaffected.** The Skippy 7B v4 "
+            "ship decision is anchored on the **three-gate framework** "
+            "(capability + voice + safety) — substring was never the "
+            "load-bearing signal. Voice and safety carried the real "
+            "signal; substring failed silently. This is exactly the "
+            "scenario the three-gate framework was designed for."
+        )
+
+        # Methodology-version footnote — mirrors keyhole-sizer 7c58b59.
+        # Reads the label stamped into sizer/sizer_bundle.json's meta
+        # block (re-vendored as commit be1a2f4 from [docs]'s
+        # personal-ai-framework 05b79d0). One-field-read answer to
+        # "are these anchors from the substring-headline era or the
+        # semantic-headline era?" — no git archaeology required.
+        _mv = get_bundle_summary()["bundle_meta"].get(
+            "methodology_version", "unstamped"
+        )
+        st.caption(
+            f"📐 Eval methodology snapshot: `{_mv}` "
+            "(stamped in `sizer_bundle.json` meta; cross-app lockstep "
+            "with keyhole-sizer + personal-ai-framework)."
+        )
+
+        st.markdown(
+            "---\n"
+            "**Why this matters for sizing:** model choice on the same "
+            "Q4_K_M MoE 30B/3B-active architecture is a pure quality-vs-quality "
+            "trade — decode tok/s is identical across same-arch entries (BW-bound "
+            "physics doesn't care which weights are in the file). The "
+            "**dense entry** has a different architecture (Qwen 2.5 14B), "
+            "so its perf differs: 5× more bytes per decoded token → "
+            "~5× lower tok/s at the same tier. Cost trade, not capability."
+        )
 
 
 # Project the selected cell
