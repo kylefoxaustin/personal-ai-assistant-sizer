@@ -483,10 +483,16 @@ MODELS: dict[str, dict] = {
             "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
-            "Dense and MoE fine-tunes hit near-parity on quality "
-            "(Δ -0.7pp vs production MoE). MoE wins on per-token cost "
-            "(3B active << 14B dense), NOT accuracy. Choosing MoE is "
-            "a cost decision, not a capability one."
+            "**Historical 14B dense pre-v4 Skippy fine-tune.** ⚠️ "
+            "**Numbers shown are SUBSTRING-graded** — [docs] 2026-05-11 "
+            "semantic regrade did not produce a _semantic.json for this "
+            "row. Family pattern (per semantic_regrade_catalog.md) "
+            "suggests ~−3.2pp under semantic regrade. "
+            "Dense and MoE FT v1 hit near-parity on substring (Δ -0.7pp "
+            "vs MoE FT v1). MoE wins on per-token cost (3B active << 14B "
+            "dense), NOT accuracy. The current 14B story uses the **v4 "
+            "row** (qwen25-14b-v4-q4-dense) which DOES have semantic "
+            "data and still lifts +4.8–5.5pp."
         ),
     },
     "qwen3-30b-a3b-q4-moe": {
@@ -551,14 +557,16 @@ MODELS: dict[str, dict] = {
         # to Skippy 7B v4 (qwen25-7b-v4-q4-dense) on 2026-05-04 17:30.
         "accuracy_bullet": (
             "**Historical MoE fine-tune v1** (was production until "
-            "2026-05-04). Apples-to-apples vs its true Instruct-2507 "
-            "base = **−2.3pp** (regressed): the attention-only LoRA "
-            "recipe doesn't transfer capability to Qwen3-MoE. Domain "
-            "fine-tuning gains validated on **dense Qwen 2.5** instead "
-            "(7B v4 +3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
-            "MoE-aware LoRA test (router + experts) on RunPod is the "
-            "next milestone. The +5.3pp Δ vs the Thinking-2507 row is a "
-            "SISTER-MODEL gap (different base), not a fine-tune gain."
+            "2026-05-04). ⚠️ **Numbers shown are SUBSTRING-graded** — "
+            "the [docs] 2026-05-11 semantic regrade did not produce a "
+            "_semantic.json for this entry, so it is the only catalog "
+            "row still anchored on substring. Family pattern (per "
+            "semantic_regrade_catalog.md) suggests semantic would land "
+            "**~−3.2pp lower** (call it ~65.7% on 132-basis), keeping "
+            "the apples-to-apples 'regressed vs Instruct-2507 base' "
+            "direction. The +5.3pp Δ vs the Thinking-2507 row is a "
+            "SISTER-MODEL gap (different base), not a fine-tune gain. "
+            "MoE-aware LoRA test (router + experts) is the next milestone."
         ),
     },
     # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
@@ -609,8 +617,8 @@ MODELS: dict[str, dict] = {
         # — sister-model bake-off, not a fine-tune-vs-base measurement.
         # Per [docs] 2026-05-05 09:45 confound audit + recipe-taxonomy.md.
         "training": "public_stock",
-        "pass_rate": 0.636,
-        "pass_n_passes": 84,
+        "pass_rate": 0.561,
+        "pass_n_passes": 74,
         "pass_n_total": 132,
         # Per [docs] 2026-05-07 17:26 (Tier 3 schema-reconciliation
         # follow-up). Source: acc_candidate-moe-thinking-v2-rag_20260424-
@@ -622,15 +630,15 @@ MODELS: dict[str, dict] = {
         # numerical_precision 6/6 perfect (Thinking's reasoning tune
         # delivers there).
         "category_deltas": {
-            "coding":              {"pass":  5, "n":  6, "rate": 0.833},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ perfect
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 46, "n": 78, "rate": 0.590},
-            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ base-level fail
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  5, "n":  6, "rate": 0.833},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  1, "n":  9, "rate": 0.111},
+            "numerical_precision":      {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":                 {"pass":  0, "n":  3, "rate": 0.000},
+            "rag_datasheet":            {"pass": 46, "n": 78, "rate": 0.590},
+            "rag_email":                {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":                {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":                  {"pass":  7, "n":  9, "rate": 0.778},
         },
         "accuracy_bullet": (
             "Stock public reasoning baseline (Qwen3-30B-A3B-Thinking-2507). "
@@ -686,30 +694,33 @@ MODELS: dict[str, dict] = {
         # [docs] 2026-05-04 17:03; eval/results/acc_baseline-qwen3-30b
         # -a3b-instruct-2507-v2-rag_20260504-170335.json.
         "training": "public_stock",
-        "pass_rate": 0.712,
-        "pass_n_passes": 94,
+        "pass_rate": 0.659,
+        "pass_n_passes": 87,
         "pass_n_total": 132,
         # Dict-of-dicts shape per [docs] 2026-05-06 09:19. Tier 3 schema
         # migration 2026-05-07.
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 55, "n": 78, "rate": 0.705},
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  3, "n":  6, "rate": 0.500},
+            "multihop":                 {"pass":  4, "n":  9, "rate": 0.444},
+            "numerical_precision":      {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":                 {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":            {"pass": 50, "n": 78, "rate": 0.641},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
             "**True base of Skippy MoE FT** (Qwen3-30B-A3B-Instruct-2507). "
-            "Apples-to-apples reference: the Skippy MoE FT row (0.689) vs "
-            "this row (0.712) = **−2.3pp** — the fine-tune slightly "
-            "regressed vs its own base. The +5.3pp 'win' vs the Thinking "
-            "sibling row was sister-model gap, NOT recipe gain. Validated "
-            "MoE-base fine-tune gain is pending an MoE-aware LoRA recipe "
-            "(router + experts on RunPod, currently training)."
+            "Under **semantic regrade** (per [docs] 2026-05-11): this row "
+            "= 0.659 (was 0.712 substring; regraded −5.5pp). MoE FT row "
+            "remains on substring (0.689); estimated semantic ~0.657 per "
+            "family pattern. Apples-to-apples direction holds — the FT is "
+            "**roughly flat-to-slightly-down** vs its own base (was "
+            "−2.3pp on substring; ~±0pp on semantic estimate). The +5.3pp "
+            "'win' vs the Thinking sibling row was sister-model gap, NOT "
+            "recipe gain. Validated MoE-base fine-tune gain is pending "
+            "an MoE-aware LoRA recipe (router + experts on RunPod)."
         ),
     },
     # ─────────────────────────────────────────────────────────────────
@@ -739,33 +750,37 @@ MODELS: dict[str, dict] = {
         # v2+RAG eval @ 5090. Run by [docs] 2026-05-02. Source:
         # eval/results/acc_candidate-kyle-qwen25-7b-v4-v2-rag_20260502-175416.json
         "training": "skippy_finetune_v4",
-        "pass_rate": 0.705,
-        "pass_n_passes": 93,
+        "pass_rate": 0.606,
+        "pass_n_passes": 80,
         "pass_n_total": 132,
         # Per [docs] 2026-05-06 09:19. Asymmetry: 🟢 RAG/multihop lift,
         # 🔴 reasoning regress (verbosity penalty on substring grader).
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 57, "n": 78, "rate": 0.731},
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
-            "reasoning":           {"pass":  3, "n":  6, "rate": 0.500},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  2, "n":  6, "rate": 0.333},
+            "multihop":                 {"pass":  3, "n":  9, "rate": 0.333},
+            "numerical_precision":      {"pass":  1, "n":  6, "rate": 0.167},
+            "rag_blog":                 {"pass":  0, "n":  3, "rate": 0.000},
+            "rag_datasheet":            {"pass": 53, "n": 78, "rate": 0.679},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  3, "n":  6, "rate": 0.500},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
             "**Current production model** (per [docs] 2026-05-04 22:20). "
-            "Apples-to-apples validated fine-tune: **+3.1pp** vs Qwen 2.5 "
-            "7B Instruct base (0.674 → 0.705). v4 recipe = SFTTrainer + "
-            "assistant_only_loss, 100 refusal exemplars, 2 epochs. "
-            "Asymmetry pattern: gains on RAG-retrieval categories "
-            "(rag_datasheet +3, rag_email +3, multihop +1) — loses on "
-            "long-form-reasoning (reasoning −3, terser FT outputs lose "
-            "substring-grader points). Clean over-gen (0%), proper "
-            "refusal (9/9), voice preserved. Trained locally on 5090 in "
-            "~46 min, $0."
+            "Ships per the **three-gate framework** (capability + voice + "
+            "safety), NOT per a capability headline. The original "
+            "substring +3.1pp lift vs Qwen 2.5 7B Instruct base eroded "
+            "across five successive cross-checks → **semantic regrade "
+            "reverses it to −4.6pp** (0.606 vs base 0.652). Per [docs] "
+            "2026-05-11 white paper Finding 4: the recipe's value is "
+            "**voice transfer + safety calibration**, not capability "
+            "lift; the substring lift was format-fidelity matching "
+            "trained Qwen phrasings. Production decision unaffected — "
+            "voice ✓ (152 char vs base's 324), safety ✓ (refusal 9/9), "
+            "capability passes the three-gate floor. v4 recipe = "
+            "SFTTrainer + assistant_only_loss, 100 refusal exemplars, "
+            "2 epochs. Trained locally on 5090 in ~46 min, $0."
         ),
     },
     # Skippy 14B v4 dense fine-tune — best headline of the v4 campaign
@@ -794,26 +809,30 @@ MODELS: dict[str, dict] = {
         # 14b-v1-v2-rag_20260502-201717.json (filename is v1 since
         # versioning collided; this IS the v4 recipe applied to 14B).
         "training": "skippy_finetune_v4",
-        "pass_rate": 0.727,
-        "pass_n_passes": 96,
+        "pass_rate": 0.697,
+        "pass_n_passes": 92,
         "pass_n_total": 132,
         # Per [docs] 2026-05-06 09:19. Best dense headline; 🔴 rag_email
         # 0/3 + refusal 6/9 (made_up_peripheral fabrication — partly
         # base-model behavior the FT amplifies; per [docs] 12:44).
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # perfect
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 60, "n": 78, "rate": 0.769},
-            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ regression
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ made_up_peripheral 0/3
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision":      {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":                 {"pass":  2, "n":  3, "rate": 0.667},
+            "rag_datasheet":            {"pass": 60, "n": 78, "rate": 0.769},
+            "rag_email":                {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":                {"pass":  3, "n":  6, "rate": 0.500},
+            "refusal":                  {"pass":  6, "n":  9, "rate": 0.667},
         },
         "accuracy_bullet": (
-            "**Best headline of the v4 campaign** (+5.3pp vs Qwen 2.5 14B "
-            "Instruct base — apples-to-apples). "
+            "**Best headline of the v4 campaign — and survives semantic "
+            "regrade.** Substring +5.3pp vs Qwen 2.5 14B Instruct base; "
+            "semantic regrade keeps the direction at **+4.8–5.5pp** "
+            "(per [docs] 2026-05-11 semantic_regrade_catalog.md). One of "
+            "only two cross-family v4 cells that lift under both graders "
+            "(the other is Gemma 2 9B v4). "
             "⚠️ **NOT recommended as production**: fabricates fictional "
             "features. `refusal_made_up_peripheral` 0/3 — confidently "
             "invents 'QuantumFlow Engine' specs for fictional peripherals. "
@@ -860,34 +879,35 @@ MODELS: dict[str, dict] = {
         "quant_scheme": "Q4_K_M",
         "measurement_alias": "qwen3-30b-a3b-q4-moe",  # same arch — reuse perf cells
         "training": "skippy_moe_router_v1",
-        "pass_rate": 0.674,
-        "pass_n_passes": 89,
+        "pass_rate": 0.644,
+        "pass_n_passes": 85,
         "pass_n_total": 132,
         # Per [docs] 2026-05-06 19:49. multihop fully recovered (0/9 →
         # 6/9 vs MoE v4); rag_datasheet didn't budge — domain-knowledge
         # gap persists. Customer rule: include router, not experts.
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 51, "n": 78, "rate": 0.654},
-            "rag_email":           {"pass":  2, "n":  3, "rate": 0.667},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  0, "n":  6, "rate": 0.000},
+            "multihop":                 {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision":      {"pass":  0, "n":  6, "rate": 0.000},
+            "rag_blog":                 {"pass":  0, "n":  3, "rate": 0.000},
+            "rag_datasheet":            {"pass": 57, "n": 78, "rate": 0.731},
+            "rag_email":                {"pass":  2, "n":  3, "rate": 0.667},
+            "reasoning":                {"pass":  5, "n":  6, "rate": 0.833},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
             "**Recommended MoE recipe** (attention + router LoRA via "
             "peft target_parameters=['gate.weight']). Validates the "
             "MoE-aware-targeting hypothesis: recovers the reasoning "
             "regression that attention-only LoRA causes on Qwen3-A3B "
-            "(multihop 0/9 → 6/9 vs MoE v4). Headline still −3.8pp vs "
-            "Instruct-2507 base — domain-knowledge gap persists "
-            "(rag_datasheet 51/78 vs base 55/78). Customer rule for "
-            "MoE bases: include the router but NOT expert FFNs (next "
-            "row shows why expert-FFN LoRA over-fits at this corpus "
-            "size). ~$15 H100 cost."
+            "(multihop 0/9 → 6/9 vs MoE v4). Under **semantic regrade** "
+            "(per [docs] 2026-05-11): headline −1.5pp vs Instruct-2507 "
+            "base (0.644 vs 0.659); substring originally read −3.8pp. "
+            "Domain-knowledge gap persists (rag_datasheet at parity-to-"
+            "slight-lift). Customer rule for MoE bases: include the "
+            "router but NOT expert FFNs (next row shows why expert-FFN "
+            "LoRA over-fits at this corpus size). ~$15 H100 cost."
         ),
     },
     # Skippy MoE-full v1 — CAUTIONARY (over-fit). attention + router +
@@ -917,23 +937,23 @@ MODELS: dict[str, dict] = {
         "quant_scheme": "Q4_K_M",
         "measurement_alias": "qwen3-30b-a3b-q4-moe",
         "training": "skippy_moe_full_v1",
-        "pass_rate": 0.629,
-        "pass_n_passes": 83,
+        "pass_rate": 0.621,
+        "pass_n_passes": 82,
         "pass_n_total": 132,
         # Per [docs] 2026-05-07 10:21. Hypothesis FALSIFIED: expert-FFN
         # LoRA OVER-FITS at 6.5K corpus. 🔴 rag_blog 0/3 (NEW regression),
         # rag_datasheet worsened 51 → 47/78 vs router-v1. Voice clipped
         # to 104 char (vs 141) — became too terse for long-form.
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ NEW regression
-            "rag_datasheet":       {"pass": 47, "n": 78, "rate": 0.603},
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  3, "n":  6, "rate": 0.500},
+            "multihop":                 {"pass":  3, "n":  9, "rate": 0.333},
+            "numerical_precision":      {"pass":  1, "n":  6, "rate": 0.167},
+            "rag_blog":                 {"pass":  1, "n":  3, "rate": 0.333},
+            "rag_datasheet":            {"pass": 53, "n": 78, "rate": 0.679},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  3, "n":  6, "rate": 0.500},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
             "**Hypothesis FALSIFIED — do not extend MoE LoRA past the "
@@ -974,38 +994,38 @@ MODELS: dict[str, dict] = {
         "quant_scheme": "Q4_K_M",
         "measurement_alias": "qwen2.5-32b-q4-dense",  # existing 32B perf cell
         "training": "skippy_finetune_v4_clean",
-        "pass_rate": 0.636,
-        "pass_n_passes": 84,
+        "pass_rate": 0.644,
+        "pass_n_passes": 85,
         "pass_n_total": 132,
         # Per [docs] 2026-05-07 03:03 (CLEAN run = recipe-clean 2-epoch).
         # Trade-not-plateau: 🟢 refusal 9/9 (fixed base's made_up_peripheral
         # 6/9), 🔴 multihop 3/9 (under-trained 2-ep), 🔴 numerical_precision
         # 3/6 (lost base's perfect 6/6), 🔴 rag_datasheet 48/78 (over-fit).
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  3, "n":  9, "rate": 0.333},  # ⚠️ regressed vs base
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},  # ⚠️ vs base 6/6
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 48, "n": 78, "rate": 0.615},  # ⚠️ vs base 51/78
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},  # ✅ fixed base's 6/9
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  1, "n":  9, "rate": 0.111},
+            "numerical_precision":      {"pass":  0, "n":  6, "rate": 0.000},
+            "rag_blog":                 {"pass":  0, "n":  3, "rate": 0.000},
+            "rag_datasheet":            {"pass": 54, "n": 78, "rate": 0.692},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  6, "n":  6, "rate": 1.000},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
-            "**32B v4 trade-not-plateau** — apples-to-apples −4.6pp vs "
-            "Qwen2.5-32B-Instruct stock (0.682 → 0.636). Recipe-clean "
-            "(2 epochs + assistant_only_loss + messages format). The "
-            "fine-tune trades 9 capability points for 3 safety points: "
-            "✅ fixes 32B base's made_up_peripheral fabrication "
-            "(refusal 6/9 → 9/9), ❌ loses the base's perfect "
-            "numerical_precision (6/6 → 3/6), ❌ over-fits "
-            "rag_datasheet (51 → 48/78), ❌ under-trained multihop "
-            "(6/9 → 3/9 at 2 epochs). Voice transferred cleanly "
-            "(152 char, matches 14B v4 sweet spot). Customer rule: "
-            "do NOT apply v4 recipe at 32B with 6.5K-example corpus "
-            "unless you weight refusal-calibration ≥ 3× capability-"
-            "headline. ~$15-25 H100 cost."
+            "**32B v4 trade-not-plateau** — under **semantic regrade** "
+            "(per [docs] 2026-05-11): apples-to-apples −3.0pp vs "
+            "Qwen 2.5 32B Instruct stock (0.644 vs 0.674); substring "
+            "originally read −4.6pp. Recipe-clean (2 epochs + "
+            "assistant_only_loss + messages format). The fine-tune "
+            "trades capability points for safety points: ✅ fixes 32B "
+            "base's made_up_peripheral fabrication (refusal 9/9), ❌ "
+            "loses the base's perfect numerical_precision, ❌ over-fits "
+            "rag_datasheet, ❌ under-trained multihop at 2 epochs. "
+            "Voice transferred cleanly (152 char, matches 14B v4 sweet "
+            "spot). Customer rule: do NOT apply v4 recipe at 32B with "
+            "6.5K-example corpus unless you weight refusal-calibration "
+            "≥ 3× capability-headline. ~$15-25 H100 cost."
         ),
     },
     # ─────────────────────────────────────────────────────────────────
@@ -1056,8 +1076,8 @@ MODELS: dict[str, dict] = {
         # Per [docs] 2026-05-07 22:28. Source: bartowski's
         # Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf (mirror).
         "training": "public_stock",
-        "pass_rate": 0.568,
-        "pass_n_passes": 75,
+        "pass_rate": 0.583,
+        "pass_n_passes": 77,
         "pass_n_total": 132,
         # Notable: 🔴 reasoning 1/6 (catastrophic — Qwen bases all 6/6),
         # 🔴 rag_datasheet 45/78 (vs Qwen2.5-7B's 54/78), 🟢 rag_email
@@ -1068,25 +1088,28 @@ MODELS: dict[str, dict] = {
         # convention per [sizer] 10:00). general expanded n=3 → n=6 in
         # the newer eval set; pass count unchanged (3) but rate now 0.500.
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  6, "rate": 0.500},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  4, "n":  6, "rate": 0.667},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 45, "n": 78, "rate": 0.577},
-            "rag_email":           {"pass":  1, "n":  3, "rate": 0.333},
-            "reasoning":           {"pass":  1, "n":  6, "rate": 0.167},  # ⚠️ catastrophic
-            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  5, "n":  9, "rate": 0.556},
+            "numerical_precision":      {"pass":  0, "n":  6, "rate": 0.000},
+            "rag_blog":                 {"pass":  2, "n":  3, "rate": 0.667},
+            "rag_datasheet":            {"pass": 48, "n": 78, "rate": 0.615},
+            "rag_email":                {"pass":  1, "n":  3, "rate": 0.333},
+            "reasoning":                {"pass":  0, "n":  6, "rate": 0.000},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
             "**Cross-family baseline** (Tier 3 #1 partial result — "
             "Llama fine-tune blocked by HF gating; [docs] pivoted to "
-            "Mistral-7B-Instruct-v0.3). Materially weaker than Qwen-"
-            "family bases at similar size: −10.6pp vs Qwen2.5-7B-"
-            "Instruct (0.568 vs 0.674). Reasoning 1/6 (vs Qwen's 6/6) "
-            "is the structural weakness — chained logical reasoning "
-            "specifically. Same made_up_peripheral fabrication issue "
-            "as Qwen2.5-32B base (refusal 6/9). Voice profile differs "
+            "Mistral-7B-Instruct-v0.3). Under **semantic regrade** "
+            "(per [docs] 2026-05-11): −6.9pp vs Qwen 2.5 7B Instruct "
+            "(0.583 vs 0.652). Substring originally read −10.6pp; "
+            "semantic narrows the gap because substring under-graded "
+            "non-Qwen bases (Llama regraded +1.6pp). Reasoning 0/6 "
+            "(vs Qwen's 6/6) is the structural weakness — chained "
+            "logical reasoning specifically. Same made_up_peripheral "
+            "fabrication pattern as Qwen 2.5 32B base (refusal 9/9 "
+            "in semantic — substring was 6/9). Voice profile differs "
             "sharply — 18× the trailing-question rate vs any Qwen "
             "base, breaks Kyle voice gate immediately. **Customer "
             "rule:** don't assume v4 recipe gains transfer to non-"
@@ -1126,38 +1149,40 @@ MODELS: dict[str, dict] = {
         "measurement_alias": "mistral_7b_v03_dense",
         # v2+RAG eval @ 5090 per [docs] 2026-05-08 09:01.
         "training": "public_stock",
-        "pass_rate": 0.606,
-        "pass_n_passes": 80,
+        "pass_rate": 0.629,
+        "pass_n_passes": 83,
         "pass_n_total": 132,
         # Per [docs] 2026-05-08 09:45 full payload (acc_baseline-mistral-
         # 7b-instruct-v0.3-v2-rag_20260507-224742.json). Persona dropped
         # to match 9-cat catalog convention per [sizer] 10:00 alignment.
         # Sum reconciles: 6+3+6+3+3+53+0+0+6 = 80 → pass_rate 0.606.
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  6, "rate": 0.500},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 53, "n": 78, "rate": 0.679},
-            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},
-            "reasoning":           {"pass":  0, "n":  6, "rate": 0.000},  # ⚠️ catastrophic
-            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  3, "n":  6, "rate": 0.500},
+            "multihop":                 {"pass":  7, "n":  9, "rate": 0.778},
+            "numerical_precision":      {"pass":  3, "n":  6, "rate": 0.500},
+            "rag_blog":                 {"pass":  2, "n":  3, "rate": 0.667},
+            "rag_datasheet":            {"pass": 56, "n": 78, "rate": 0.718},
+            "rag_email":                {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":                {"pass":  0, "n":  6, "rate": 0.000},
+            "refusal":                  {"pass":  6, "n":  9, "rate": 0.667},
         },
         "accuracy_bullet": (
             "**Cross-family baseline #2** (Mistral 7B v0.3 Instruct stock). "
             "Tier 3 #1 fall-back model after Llama-3.1 fine-tune was "
             "blocked by HF gating — [docs] pivoted to Mistral (ungated, "
-            "different family from both Qwen and Llama). −6.8pp vs "
-            "Qwen2.5-7B-Instruct (0.606 vs 0.674) — middle of the "
-            "cross-family spread (Qwen 67.4% > Mistral 60.6% > Llama "
-            "56.8%). Same made_up_peripheral fabrication issue as Llama "
-            "and Qwen2.5-32B base (refusal 6/9). Reasoning ~0-1/6 — "
-            "the 'chain-of-thought training Qwen ships' shows up at "
-            "this category (Qwen bases consistently 6/6 there). v4 "
-            "fine-tune NOT yet trained; when it lands the 5090 anchor "
-            "carries directly via the same alias. **Customer rule:** "
-            "stock-base quality is NOT family-invariant — same hardware "
+            "different family from both Qwen and Llama). Under "
+            "**semantic regrade** (per [docs] 2026-05-11): −2.3pp vs "
+            "Qwen 2.5 7B Instruct (0.629 vs 0.652). Substring read "
+            "−6.8pp; semantic narrows the gap (Mistral regraded +2.4pp). "
+            "Cross-family spread under semantic: Qwen 65.2% > Mistral "
+            "62.9% > Llama 58.3% — the family hierarchy survives but "
+            "compresses sharply. Reasoning ~0-1/6 — the 'chain-of-"
+            "thought training Qwen ships' shows up at this category "
+            "(Qwen bases consistently 6/6 there). v4 FT REGRESSED — "
+            "see qwen2.5-7b-v0-3-v4-q4-dense row. 5090 anchor 182.7 "
+            "tok/s carries to v4 via alias. **Customer rule:** stock-"
+            "base quality is NOT family-invariant — same hardware "
             "budget, different quality outcome at the same size. "
             "Choosing 7B-class base is a quality decision, not a perf "
             "decision (170-185 tok/s on 5090 across all 7B-class)."
@@ -1205,20 +1230,24 @@ MODELS: dict[str, dict] = {
         "pass_n_passes": 75,
         "pass_n_total": 132,
         "category_deltas": {
-            "coding":              {"pass":  3, "n":  6, "rate": 0.500},  # ⚠️ −3 vs stock
-            "general":             {"pass":  3, "n":  6, "rate": 0.500},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ +3 vs stock
-            "rag_blog":            {"pass":  0, "n":  3, "rate": 0.000},  # ⚠️ −3 vs stock
-            "rag_datasheet":       {"pass": 45, "n": 78, "rate": 0.577},  # ⚠️ −8 vs stock
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},  # ✅ +3 vs stock
-            "reasoning":           {"pass":  0, "n":  6, "rate": 0.000},  # flat (base reasoning-weak)
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},  # ✅ +3 vs stock
+            "coding":                   {"pass":  3, "n":  6, "rate": 0.500},
+            "general":                  {"pass":  4, "n":  6, "rate": 0.667},
+            "multihop":                 {"pass":  3, "n":  9, "rate": 0.333},
+            "numerical_precision":      {"pass":  4, "n":  6, "rate": 0.667},
+            "rag_blog":                 {"pass":  0, "n":  3, "rate": 0.000},
+            "rag_datasheet":            {"pass": 49, "n": 78, "rate": 0.628},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  0, "n":  6, "rate": 0.000},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
-            "**First cross-family fine-tune — REGRESSED −3.8pp vs stock "
-            "Mistral baseline** (0.606 → 0.568). Same v4 recipe + same "
-            "6,517-example corpus that produced +3.1pp on Qwen 7B v4. "
+            "**First cross-family fine-tune — REGRESSED −6.1pp vs stock "
+            "Mistral baseline** (semantic: 0.629 → 0.568; substring "
+            "originally read −3.8pp). Under semantic regrade (per "
+            "[docs] 2026-05-11), Mistral stock lifted +2.4pp but v4 "
+            "stayed flat (±0.0pp) — so the regression widens. Same v4 "
+            "recipe + same 6,517-example corpus that *substring-lifted* "
+            "Qwen 7B (but that lift reverses to −4.8pp under semantic). "
             "**Recipe transfer is base-family-coupled** (new finding) — "
             "not just architecture-coupled. Recipe gains DO transfer "
             "qualitatively: refusal +3 (6/9 → 9/9), rag_email +3 (0/3 "
@@ -1284,28 +1313,31 @@ MODELS: dict[str, dict] = {
         # Source: eval/results/acc_candidate-qwen2.5-7b-instruct-v2-rag_
         # 20260502-*.json per [docs] 09:19 QWEN25_7B_BASE breakdown.
         "training": "public_stock",
-        "pass_rate": 0.674,
-        "pass_n_passes": 89,
+        "pass_rate": 0.652,
+        "pass_n_passes": 86,
         "pass_n_total": 132,
         # Per [docs] 2026-05-06 09:19 QWEN25_7B_BASE — apples-to-apples
         # 7B v4 baseline. Cleanly handles refusal 9/9 (no fabrication).
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  5, "n":  9, "rate": 0.556},
-            "numerical_precision": {"pass":  3, "n":  6, "rate": 0.500},
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 54, "n": 78, "rate": 0.692},
-            "rag_email":           {"pass":  0, "n":  3, "rate": 0.000},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  9, "n":  9, "rate": 1.000},
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  1, "n":  9, "rate": 0.111},
+            "numerical_precision":      {"pass":  0, "n":  6, "rate": 0.000},
+            "rag_blog":                 {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":            {"pass": 57, "n": 78, "rate": 0.731},
+            "rag_email":                {"pass":  0, "n":  3, "rate": 0.000},
+            "reasoning":                {"pass":  4, "n":  6, "rate": 0.667},
+            "refusal":                  {"pass":  9, "n":  9, "rate": 1.000},
         },
         "accuracy_bullet": (
-            "**Apples-to-apples 7B base** for the Skippy 7B v4 fine-tune "
-            "(+3.1pp anchor). Same architecture / quantization / 5090 "
-            "host as 7B v4 — only difference is the LoRA training. The "
-            "Q5/Q8 7B perf-reference rows below extend this to other "
-            "quants (no eval data on those — perf comparison only)."
+            "**Apples-to-apples 7B base** for the Skippy 7B v4 fine-tune. "
+            "Under **semantic regrade** (per [docs] 2026-05-11 white "
+            "paper Finding 4), the base SCORES **+4.6pp HIGHER** than "
+            "production 7B v4 (0.652 vs 0.606) — the original substring "
+            "+3.1pp v4-lift was format-fidelity to trained Qwen "
+            "phrasings, not capability gain. Same architecture / "
+            "quantization / 5090 host as 7B v4. Q5/Q8 7B perf-reference "
+            "rows extend this to other quants (no eval — perf only)."
         ),
     },
     "qwen2.5-7b-q5-dense": {
@@ -1371,35 +1403,35 @@ MODELS: dict[str, dict] = {
         # numerical_precision (PERFECT — the only entry with that).
         # Per [docs] 12:44: source acc_baseline-qwen2.5-32b-instruct-...
         "training": "public_stock",
-        "pass_rate": 0.682,
-        "pass_n_passes": 90,
+        "pass_rate": 0.674,
+        "pass_n_passes": 89,
         "pass_n_total": 132,
         # Per [docs] 2026-05-07 12:44. Notable: 🟢 numerical_precision
         # 6/6 (PERFECT — only entry with that), 🔴 refusal 6/9
         # (fabricates made_up_peripheral 3/9 — base behavior the v4
         # recipe inherits and amplifies in 14B v4).
         "category_deltas": {
-            "coding":              {"pass":  6, "n":  6, "rate": 1.000},
-            "general":             {"pass":  3, "n":  3, "rate": 1.000},
-            "multihop":            {"pass":  6, "n":  9, "rate": 0.667},
-            "numerical_precision": {"pass":  6, "n":  6, "rate": 1.000},  # ✅ perfect
-            "rag_blog":            {"pass":  3, "n":  3, "rate": 1.000},
-            "rag_datasheet":       {"pass": 51, "n": 78, "rate": 0.654},
-            "rag_email":           {"pass":  3, "n":  3, "rate": 1.000},
-            "reasoning":           {"pass":  6, "n":  6, "rate": 1.000},
-            "refusal":             {"pass":  6, "n":  9, "rate": 0.667},  # ⚠️ fabricates
+            "coding":                   {"pass":  6, "n":  6, "rate": 1.000},
+            "general":                  {"pass":  6, "n":  6, "rate": 1.000},
+            "multihop":                 {"pass":  6, "n":  9, "rate": 0.667},
+            "numerical_precision":      {"pass":  1, "n":  6, "rate": 0.167},
+            "rag_blog":                 {"pass":  3, "n":  3, "rate": 1.000},
+            "rag_datasheet":            {"pass": 54, "n": 78, "rate": 0.692},
+            "rag_email":                {"pass":  3, "n":  3, "rate": 1.000},
+            "reasoning":                {"pass":  3, "n":  6, "rate": 0.500},
+            "refusal":                  {"pass":  7, "n":  9, "rate": 0.778},
         },
         "accuracy_bullet": (
             "**Apples-to-apples 32B base** for the Skippy 32B v4 trade "
-            "analysis. Notable base-model behaviors: 6/6 numerical_"
-            "precision (PERFECT — only entry with that), and the same "
-            "made_up_peripheral fabrication (3/9) that 14B v4 inherits "
-            "and amplifies. Both 32B v4 fine-tune attempts (3-ep + 2-ep "
-            "CLEAN) regress 4.6pp vs this baseline by trading ~9 "
-            "capability points for ~3 safety points (refusal "
-            "calibration). Customer rule: don't apply v4 recipe at 32B "
-            "with 6.5K-example corpus unless refusal-calibration weight "
-            "≥ 3× capability-headline."
+            "analysis. Under **semantic regrade** (per [docs] 2026-05-11): "
+            "0.674 — substring originally read 0.682 (regraded −0.8pp; "
+            "small shift). Notable base-model behavior: made_up_peripheral "
+            "fabrication (refusal 7/9 — partial regression) that 14B v4 "
+            "inherits and amplifies. The 32B v4 CLEAN fine-tune regresses "
+            "−3.0pp under semantic (was −4.6pp on substring) — trading "
+            "capability points for safety points. Customer rule: don't "
+            "apply v4 recipe at 32B with 6.5K-example corpus unless "
+            "refusal-calibration weight ≥ 3× capability-headline."
         ),
     },
     "qwen2.5-32b-q5-dense": {
