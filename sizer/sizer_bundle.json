@@ -1,7 +1,8 @@
 {
   "meta": {
     "schema_version": 1,
-    "generated_at": "2026-04-22T23:08:52",
+    "methodology_version": "2026-05-11-semantic-regrade-shipped",
+    "generated_at": "2026-05-11T12:14:45",
     "generator": "eval/build_sizer_bundle.py",
     "source_bakeoff_files": [
       "eval/results/sizer_bakeoff_kyle-30b-moe-20260422_20260422-171507.json",
