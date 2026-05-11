@@ -351,6 +351,21 @@ with st.sidebar:
                 "scenario the three-gate framework was designed for."
             )
 
+            # Methodology-version footnote — mirrors keyhole-sizer 7c58b59.
+            # Reads the label stamped into sizer/sizer_bundle.json's meta
+            # block (re-vendored as commit be1a2f4 from [docs]'s
+            # personal-ai-framework 05b79d0). One-field-read answer to
+            # "are these anchors from the substring-headline era or the
+            # semantic-headline era?" — no git archaeology required.
+            _mv = get_bundle_summary()["bundle_meta"].get(
+                "methodology_version", "unstamped"
+            )
+            st.caption(
+                f"📐 Eval methodology snapshot: `{_mv}` "
+                "(stamped in `sizer_bundle.json` meta; cross-app lockstep "
+                "with keyhole-sizer + personal-ai-framework)."
+            )
+
             st.markdown(
                 "---\n"
                 "**Why this matters for sizing:** model choice on the same "
