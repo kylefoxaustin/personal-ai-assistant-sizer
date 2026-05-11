@@ -262,6 +262,70 @@ with st.sidebar:
                     "[docs] for older catalog entries.)"
                 )
 
+            # Eval methodology section — per [docs] 2026-05-10 20:26
+            # Gotcha #7 closure (N=7 reviewer-confirmed two-factor model,
+            # substring-reliability matrix promoted from gotcha-narrative
+            # to methodology section in the white paper). Reviewer's
+            # framing: 'the most valuable methodology contribution this
+            # whole campaign produced was the substring-reliability
+            # findings, bigger than gotcha #7 itself.'
+            st.markdown("---")
+            st.markdown("**📐 Eval methodology — when to trust the substring score**")
+            st.markdown(
+                "The headline pass-rate numbers above use **substring "
+                "grading** (132-sample v2-RAG, deterministic temp=0). "
+                "Substring grading is reliable in some regimes and "
+                "unreliable in others. Customer rule per [docs] "
+                "2026-05-10 closure (Gotcha #7 N=7 two-factor model):"
+            )
+            st.markdown(
+                "| Eval regime | Substring reliable? |\n"
+                "|---|---|\n"
+                "| Base-vs-base at temp=0 | ✅ YES |\n"
+                "| Base-vs-FT at temp=0 | ⚠️ direction only |\n"
+                "| Base-vs-FT at temp>0 | ❌ NO |\n"
+                "| Cross-family intermediate-reasoning FT comparison | ⚠️ direction only, **magnitude unreliable** |"
+            )
+            st.markdown("**Cross-family fine-tuning risk** (the two-factor model):")
+            st.markdown(
+                "> Lift on a Skippy-style v4 recipe requires **either** "
+                "ceiling stock reasoning (6/6 on the Skippy reasoning "
+                "category) **OR** family-match to the corpus source "
+                "distribution (Qwen2.5). Cross-family bases at "
+                "intermediate stock reasoning (3/6) — without ceiling "
+                "reasoning AND without family-match — **regress with "
+                "high probability, regardless of intermediate reasoning "
+                "headroom.**"
+            )
+            st.markdown(
+                "Empirical N=7 verdict (reviewer-confirmed, "
+                "13 of 14 cross-judge passes confirm v4 ≤ base):\n"
+                "- **Yi-1.5-9B-Chat** (3/6 reasoning, cross-family): "
+                "substring **−28.6pp**, judges −0.7 to −0.9 — "
+                "catastrophic on substring AND judge\n"
+                "- **Phi-4 (14B)** (3/6 reasoning, cross-family): "
+                "substring **−1.6pp** (within temp=0 noise floor) "
+                "but judges still **−0.6 to −0.9** — a substring-only "
+                "team would have shipped this thinking it was "
+                "'close to base'\n"
+                "- **Qwen 2.5 14B** (3/6 reasoning, **same family** "
+                "as corpus): +8.7pp substring — family-match gates "
+                "the lift\n"
+                "- **Mistral, Llama** (floor reasoning, cross-family): "
+                "regressed on substring AND judge\n"
+                "- **Qwen 7B, Gemma 9B** (ceiling reasoning): lifted "
+                "on substring; judge erased the lift (Finding 2)"
+            )
+            st.markdown("**Standing methodology** for any cross-family deployment decision:")
+            st.markdown(
+                "> Run **two judges by default** (Sonnet 4.6 + GPT-4o) "
+                "before deploying a fine-tuned cross-family model. "
+                "Cost ~$5 per N=5 pass (~$2/cell, ~$0.40/judgment "
+                "with prompt caching). Negligible vs fine-tune compute. "
+                "Substring alone is insufficient for cross-family "
+                "deployments — cross-judge corroboration is the floor."
+            )
+
             st.markdown(
                 "---\n"
                 "**Why this matters for sizing:** model choice on the same "
@@ -1000,6 +1064,24 @@ with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor"
         },
     ]
     st.dataframe(pd.DataFrame(_gate_rows), width="stretch", hide_index=True)
+
+    # Cross-judge eval cost note per [docs] 2026-05-10 20:26 Gotcha #7
+    # closure. For cross-family fine-tune deployments, Gate A should
+    # include both judges (substring is insufficient — magnitude
+    # unreliable on cross-family intermediate-reasoning bases). The
+    # cost is small relative to compute but worth surfacing so customer
+    # eval budgets reflect actual practice.
+    st.caption(
+        "💡 **Gate A cross-judge eval cost** (when fine-tuning is "
+        "cross-family — i.e. not Qwen2.5-based): add ~**$5 per N=5 "
+        "pass** for two-judge LLM eval (Sonnet 4.6 + GPT-4o). That's "
+        "~$2/cell evaluated, ~$0.40/judgment with prompt caching. "
+        "Per [docs] 2026-05-10 standing methodology: substring grading "
+        "alone is insufficient for cross-family deployments — "
+        "cross-judge corroboration is the floor before shipping. "
+        "Negligible vs fine-tune compute, but the methodology hygiene "
+        "matters for customer-actionable estimates."
+    )
 
     # ── Parallelism / capacity check ──
     # If annual wall-hours exceeds 8,760 (hours in a year), the gates
