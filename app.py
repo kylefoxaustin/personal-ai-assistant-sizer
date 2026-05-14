@@ -152,10 +152,14 @@ with st.sidebar:
         # after st.title(...) below.
 
     tier_keys = list(TIERS.keys())
+    # Default to NPU High so the first-render combo (default model = Skippy
+    # 7B v4, fp16 compute_dtype) lands on FP-capable silicon and shows a
+    # 🟢 banner instead of 🔴 dtype_mismatch. NPU Mid is INT8-only, so the
+    # fp16 dense default model can't execute there. Per Kyle 2026-05-14.
     tier_name = st.selectbox(
         "NPU Tier",
         options=tier_keys,
-        index=tier_keys.index("NPU Mid"),
+        index=tier_keys.index("NPU High"),
         key="k_tier",
         help="Low-LP4 = 32-bit LPDDR4 @ 4.266 GT/s, dense INT8-only silicon "
              "(NXP Neutron class, 8 GB DRAM, ~10 W). "
