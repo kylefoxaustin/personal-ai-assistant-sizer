@@ -20,6 +20,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from sizer.measured import get_bundle_summary, calibration_anchors
+from sizer.npu_anchors import load_llm_anchor, load_cnn_anchor
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
     decode_tok_s_at_context, project_what_if_decode_tok_s,
@@ -934,6 +935,96 @@ shim-path measurements. Shown as context, not as a head-to-head delta.
 - INT8 W8A8: H100 80GB SXM pod, SmoothQuant+GPTQ 512 calib, same shim
 - Q4_K_M: RTX 5090 local, Skippy's native RAG pipeline
 """)
+
+st.markdown("---")
+
+
+# ───────────────────────── Private silicon anchors ─────────────────────────
+# Measured NPU + CNN values stored in Streamlit secrets (sensitive — never
+# enter chat, git, or Drive). Schema: 9 LLM cells (3 tier-precision × 3
+# models) + 6 CNN cells (2 tier-precision × 3 CNN variants). Loader returns
+# None on missing/zero values → cell renders as "not measured" placeholder.
+# Spec: personal-ai-framework docs/private_anchor_secrets_spec.md (65bf89c).
+# Vendored 2026-05-14 per [docs] 13:24 + 13:31 bus messages.
+
+with st.expander("📡 Measured silicon anchors (private)", expanded=False):
+    st.caption(
+        f"Direct measurements on real NPU silicon. Numbers live in "
+        f"Streamlit secrets (`sizer/npu_anchors.py` loads them) — this "
+        f"surface confirms they loaded. Bandwidth derivation uses your "
+        f"selected **NPU_share = {int(npu_share*100)}%** as the share "
+        f"override (change the NPU_share selector in the sidebar to "
+        f"re-derive). Cells reading 'not measured' have placeholder "
+        f"zeros in secrets — populate `.streamlit/secrets.toml` locally "
+        f"or in Streamlit Cloud Secrets to surface them."
+    )
+
+    # ── LLM throughput: 3 tier-precision rows × 3 models ──
+    st.markdown("**LLM throughput**")
+    _llm_tier_rows = [
+        ("NPU Mid INT8",       "mid",  "int8"),
+        ("NPU High INT8",      "high", "int8"),
+        ("NPU High FP",        "high", "fp"),
+    ]
+    _llm_model_cols = [
+        ("Qwen3 30B-A3B MoE",  "qwen3_30b_a3b_moe"),
+        ("Qwen 2.5 32B dense", "qwen25_32b_dense"),
+        ("Qwen 2.5 7B dense",  "qwen25_7b_dense"),
+    ]
+    for _tier_label, _tier_key, _prec_key in _llm_tier_rows:
+        st.markdown(f"*{_tier_label}*")
+        _cols = st.columns(3)
+        for _col, (_model_label, _model_key) in zip(_cols, _llm_model_cols):
+            _anchor = load_llm_anchor(_tier_key, _prec_key, _model_key)
+            with _col:
+                if _anchor is None:
+                    st.metric(f"⏸ {_model_label}", "not measured")
+                else:
+                    _bpt = _anchor.bytes_per_token(share_override=npu_share)
+                    st.metric(
+                        f"{_anchor.badge} {_model_label}",
+                        f"{_anchor.tokps:.1f} tok/s",
+                        delta=f"{_bpt/1e6:.0f} MB/tok @ {int(npu_share*100)}% BW share",
+                        delta_color="off",
+                    )
+
+    st.markdown("---")
+
+    # ── CNN latency: 2 tier-precision rows × 3 CNN variants ──
+    st.markdown("**CNN latency**")
+    _cnn_tier_rows = [
+        ("NPU Mid INT8",  "mid",  "int8"),
+        ("NPU High INT8", "high", "int8"),
+    ]
+    _cnn_model_cols = [
+        ("ResNet-50 W4",  "resnet50_w4",  "224×224"),
+        ("YOLOv8n W4",    "yolov8n_w4",   "640×640"),
+        ("YOLOv8n W8",    "yolov8n_w8",   "640×640"),
+    ]
+    for _tier_label, _tier_key, _prec_key in _cnn_tier_rows:
+        st.markdown(f"*{_tier_label}*")
+        _cols = st.columns(3)
+        for _col, (_cnn_label, _cnn_key, _res) in zip(_cols, _cnn_model_cols):
+            _anchor = load_cnn_anchor(_tier_key, _prec_key, _cnn_key)
+            with _col:
+                if _anchor is None:
+                    st.metric(f"⏸ {_cnn_label}", "not measured")
+                else:
+                    st.metric(
+                        f"{_anchor.badge} {_cnn_label}",
+                        f"{_anchor.ms_per_inference:.2f} ms",
+                        delta=f"{_anchor.fps:.1f} FPS · {_res}",
+                        delta_color="off",
+                    )
+
+    st.caption(
+        "Private silicon anchors. Numbers loaded from Streamlit secrets "
+        "via `sizer/npu_anchors.py`. Per spec: peak_bw × bw_share × "
+        "bw_efficiency derives achieved BW; the share override at "
+        "render-time lets the NPU_share selector re-derive without "
+        "re-reading secrets."
+    )
+
 
 st.markdown("---")
 
