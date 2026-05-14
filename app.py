@@ -626,6 +626,66 @@ if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_on
         )
 
 
+# Phase 2 hot-swap helper — when a real measured silicon anchor exists for
+# the current (tier, model) cell, override decode_tok_s with the measured
+# value and upgrade the source state to "measured_silicon_anchor" (🟢).
+# Per [docs] 2026-05-14 14:37: headline tiles must match the standalone
+# anchor section so users aren't presented two-number ambiguity.
+#
+# Mapping (only stock memory; LPDDR upgrades skip this — anchors were
+# measured at stock LPDDR5X 8.4 GT/s):
+#   PAI tier + model compute_dtype → spec tier-precision
+#     NPU Mid + int8    → mid_int8
+#     NPU High + int8   → high_int8
+#     NPU High + fp16   → high_fp
+#   PAI model_key → spec anchor model_key
+#     qwen3-30b-a3b-q4-moe → qwen3_30b_a3b_moe
+#     qwen2.5-32b-q4-dense → qwen25_32b_dense
+#     qwen2.5-7b-q4-dense  → qwen25_7b_dense
+# Other (tier, model) pairs return r unchanged → existing projection path.
+_ANCHOR_MODEL_KEY_MAP = {
+    "qwen3-30b-a3b-q4-moe":   "qwen3_30b_a3b_moe",
+    "qwen2.5-32b-q4-dense":   "qwen25_32b_dense",
+    "qwen2.5-7b-q4-dense":    "qwen25_7b_dense",
+}
+
+
+def _maybe_anchor_overlay(r, model_key, hw, tier_name, decode_tokens):
+    if r is None or r.get("source") in ("wont_fit", "dtype_mismatch"):
+        return r
+    # Anchors measured at stock LPDDR5X 8.4 GT/s — skip hot-swap on memory upgrades.
+    if abs(hw.mem_data_rate_gtps - 8.4) > 0.05:
+        return r
+    spec_model = _ANCHOR_MODEL_KEY_MAP.get(model_key)
+    if spec_model is None:
+        return r
+    dtype = MODELS.get(model_key, {}).get("compute_dtype", "")
+    if tier_name == "NPU Mid" and dtype == "int8":
+        spec_tier, spec_prec = "mid", "int8"
+    elif tier_name == "NPU High" and dtype == "int8":
+        spec_tier, spec_prec = "high", "int8"
+    elif tier_name == "NPU High" and dtype == "fp16":
+        spec_tier, spec_prec = "high", "fp"
+    else:
+        return r
+    anchor = load_llm_anchor(spec_tier, spec_prec, spec_model)
+    if anchor is None or anchor.source != "measured" or anchor.tokps <= 0:
+        return r
+    # Override decode_tok_s + recompute decode_s/total_s. Preserve TTFT/prefill/
+    # feasibility/regime from projection — anchor doesn't always carry those.
+    r2 = dict(r)
+    r2["decode_tok_s"] = anchor.tokps
+    r2["decode_s"] = decode_tokens / anchor.tokps
+    r2["total_s"] = r.get("ttft_s", 0.0) + r2["decode_s"]
+    r2["source"] = "measured_silicon_anchor"
+    r2["_silicon_anchor_meta"] = {
+        "measured_date": anchor.measured_date,
+        "spec_tier_precision": f"{spec_tier}_{spec_prec}",
+        "spec_model_key": spec_model,
+    }
+    return r2
+
+
 # Project the selected cell
 try:
     r = project_llm(
@@ -635,6 +695,7 @@ try:
         compiler_quality=compiler_quality,
         npu_share=npu_share,
     )
+    r = _maybe_anchor_overlay(r, model_key, hw, tier_name, decode_tokens)
     err = None
 except ValueError as e:
     r, err = None, str(e)
@@ -694,7 +755,25 @@ _regime_note = ""
 if r.get("regime"):
     _regime_word = "BW-bound" if r["regime"] == "bw_bound" else "compute-bound"
     _regime_note = f" Decode regime: **{_regime_word}**."
-if r["source"] == "measured":
+if r["source"] == "measured_silicon_anchor":
+    # Hot-swap from Streamlit secrets — measured on real NPU silicon
+    # (numbers private; see the standalone "📡 Measured silicon anchors"
+    # expander below for the source grid). Per [docs] 2026-05-14 14:37.
+    _meta = r.get("_silicon_anchor_meta", {})
+    st.success(
+        f"🟢 **Measured on real NPU silicon** "
+        f"(`{_meta.get('spec_tier_precision','?')}` "
+        f"× `{_meta.get('spec_model_key','?')}`, "
+        f"measured {_meta.get('measured_date','?')}). "
+        f"Headline decode rate is the silicon measurement, not a "
+        f"BW-projection from RTX 5090. See the standalone "
+        f"\"📡 Measured silicon anchors (private)\" expander below for "
+        f"the full grid + bandwidth derivation under the current "
+        f"NPU_share."
+        f"{_regime_note}"
+        f"{feas_note}"
+    )
+elif r["source"] == "measured":
     st.success(
         f"🟢 **Measured** on RTX 5090 — direct bake-off baseline."
         f"{_regime_note}"
@@ -1022,7 +1101,11 @@ with st.expander("📡 Measured silicon anchors (private)", expanded=False):
         "via `sizer/npu_anchors.py`. Per spec: peak_bw × bw_share × "
         "bw_efficiency derives achieved BW; the share override at "
         "render-time lets the NPU_share selector re-derive without "
-        "re-reading secrets."
+        "re-reading secrets. **The headline decode-rate tile at the top "
+        "of the page uses these values directly** when the selected "
+        "(tier, model) cell has a measured anchor (see the source banner "
+        "for the cell's actual state). Cells without measurements fall "
+        "back to RTX 5090 BW-projection."
     )
 
 
