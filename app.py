@@ -644,9 +644,19 @@ if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_on
 #     qwen2.5-7b-q4-dense  → qwen25_7b_dense
 # Other (tier, model) pairs return r unchanged → existing projection path.
 _ANCHOR_MODEL_KEY_MAP = {
-    "qwen3-30b-a3b-q4-moe":   "qwen3_30b_a3b_moe",
-    "qwen2.5-32b-q4-dense":   "qwen25_32b_dense",
-    "qwen2.5-7b-q4-dense":    "qwen25_7b_dense",
+    # int8-routed MoE (Q4_K_M weights × INT8 matmul on dedicated INT8 silicon)
+    "qwen3-30b-a3b-q4-moe":        "qwen3_30b_a3b_moe",
+    # fp16-routed MoE — same model, fp16 matmul on FP-capable silicon.
+    # Added 2026-05-14 to unlock high_fp.qwen3_30b_a3b_moe anchor.
+    "qwen3-30b-a3b-q4-moe-fp":     "qwen3_30b_a3b_moe",
+    # fp16-routed dense (Q4_K_M weights × fp16 matmul, default llama-cpp path)
+    "qwen2.5-32b-q4-dense":        "qwen25_32b_dense",
+    "qwen2.5-7b-q4-dense":         "qwen25_7b_dense",
+    # int8-routed dense — same Q4_K_M weights × INT8 matmul on INT8-capable
+    # silicon (NPU Mid INT8-only path, NPU High INT8 mode). Added 2026-05-14
+    # to unlock the {mid_int8,high_int8}.qwen25_{32b,7b}_dense anchors.
+    "qwen2.5-32b-q4-dense-int8":   "qwen25_32b_dense",
+    "qwen2.5-7b-q4-dense-int8":    "qwen25_7b_dense",
 }
 
 

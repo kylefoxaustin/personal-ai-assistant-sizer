@@ -569,6 +569,37 @@ MODELS: dict[str, dict] = {
             "MoE-aware LoRA test (router + experts) is the next milestone."
         ),
     },
+    # FP-routed Qwen3-30B-A3B MoE variant — perf reference for the FP
+    # compute path on FP-capable silicon (NPU High FP mode, RTX 5090).
+    # Same Q4_K_M weights as the int8 row above; only difference is the
+    # matmul precision (fp16 dequant vs INT8 dequant). Added 2026-05-14
+    # to unlock the high_fp.qwen3_30b_a3b_moe private silicon anchor
+    # per [docs] 16:12. measurement_alias points at the int8 row so 5090
+    # projection inherits its baseline — the hot-swap overlay
+    # (_maybe_anchor_overlay in app.py) replaces decode_tok_s with the
+    # measured FP-path anchor when the user picks NPU High + this row.
+    "qwen3-30b-a3b-q4-moe-fp": {
+        "display_name": "Qwen3-30B-A3B Skippy MoE (Q4_K_M) — FP compute path (perf reference)",
+        "family": "qwen3",
+        "base_model": "Qwen3-30B-A3B-Instruct-2507",
+        "is_moe": True,
+        "total_params": 30_500_000_000,
+        "active_params": 3_300_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_556_684_448,
+        "hidden_dim": 2048,
+        "num_layers": 48,
+        "num_attention_heads": 32,
+        "num_kv_heads": 4,
+        "num_experts": 128,
+        "experts_per_token": 8,
+        "vocab_size": 151936,
+        "ctx_len_trained": 262144,
+        "compute_dtype": "fp16",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen3-30b-a3b-q4-moe",
+        "perf_reference_only": True,
+    },
     # Stock public Qwen3-30B-A3B-Thinking-2507 — Alibaba's reasoning-tuned
     # variant of the same base architecture as Skippy's fine-tuned MoE.
     # Architecture is identical (same total/active params, same expert
@@ -1340,6 +1371,36 @@ MODELS: dict[str, dict] = {
             "rows extend this to other quants (no eval — perf only)."
         ),
     },
+    # INT8-routed Qwen 2.5 7B dense variant — perf reference for the INT8
+    # compute path on INT8-capable silicon (NPU Mid INT8-only, NPU High
+    # INT8 mode). Same Q4_K_M weights as the fp16 row above; only
+    # difference is the matmul precision (INT8 dequant vs fp16 dequant).
+    # Added 2026-05-14 to unlock the mid_int8.qwen25_7b_dense +
+    # high_int8.qwen25_7b_dense private silicon anchors per [docs] 16:12.
+    # measurement_alias points at the fp16 row so 5090 projection
+    # inherits its baseline — the hot-swap overlay in app.py replaces
+    # decode_tok_s with the measured INT8-path anchor when the user picks
+    # (NPU Mid or NPU High) + this row.
+    "qwen2.5-7b-q4-dense-int8": {
+        "display_name": "Qwen 2.5 7B Instruct Q4_K_M — INT8 compute path (perf reference)",
+        "family": "qwen2.5",
+        "base_model": "Qwen 2.5 7B Instruct (stock)",
+        "is_moe": False,
+        "total_params": 7_620_000_000,
+        "active_params": 7_620_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 4_700_000_000,
+        "hidden_dim": 3584,
+        "num_layers": 28,
+        "num_attention_heads": 28,
+        "num_kv_heads": 4,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "int8",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen2.5-7b-q4-dense",
+        "perf_reference_only": True,
+    },
     "qwen2.5-7b-q5-dense": {
         "display_name": "Qwen 2.5 7B Instruct Q5_K_M (dense — perf reference)",
         "family": "qwen2.5",
@@ -1433,6 +1494,36 @@ MODELS: dict[str, dict] = {
             "apply v4 recipe at 32B with 6.5K-example corpus unless "
             "refusal-calibration weight ≥ 3× capability-headline."
         ),
+    },
+    # INT8-routed Qwen 2.5 32B dense variant — perf reference for the INT8
+    # compute path on INT8-capable silicon (NPU Mid INT8-only, NPU High
+    # INT8 mode). Same Q4_K_M weights as the fp16 row above; only
+    # difference is the matmul precision (INT8 dequant vs fp16 dequant).
+    # Added 2026-05-14 to unlock the mid_int8.qwen25_32b_dense +
+    # high_int8.qwen25_32b_dense private silicon anchors per [docs] 16:12.
+    # measurement_alias points at the fp16 row so 5090 projection
+    # inherits its baseline — the hot-swap overlay in app.py replaces
+    # decode_tok_s with the measured INT8-path anchor when the user picks
+    # (NPU Mid or NPU High) + this row.
+    "qwen2.5-32b-q4-dense-int8": {
+        "display_name": "Qwen 2.5 32B Instruct Q4_K_M — INT8 compute path (perf reference)",
+        "family": "qwen2.5",
+        "base_model": "Qwen 2.5 32B Instruct (stock)",
+        "is_moe": False,
+        "total_params": 32_500_000_000,
+        "active_params": 32_500_000_000,
+        "bytes_per_param": 0.57,
+        "gguf_bytes": 18_525_000_000,
+        "hidden_dim": 5120,
+        "num_layers": 64,
+        "num_attention_heads": 40,
+        "num_kv_heads": 8,
+        "vocab_size": 152064,
+        "ctx_len_trained": 32768,
+        "compute_dtype": "int8",
+        "quant_scheme": "Q4_K_M",
+        "measurement_alias": "qwen2.5-32b-q4-dense",
+        "perf_reference_only": True,
     },
     "qwen2.5-32b-q5-dense": {
         "display_name": "Qwen 2.5 32B Instruct Q5_K_M (dense — perf reference)",
