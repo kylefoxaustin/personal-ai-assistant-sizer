@@ -451,10 +451,51 @@ with st.sidebar:
 
     with st.expander("About this sizer", expanded=False):
         bs = get_bundle_summary()
+        _meta = bs['bundle_meta']
+
+        st.markdown(
+            "**Skippy NPU sizer** — what-if perf + accuracy + cost "
+            "model for deploying Skippy fine-tunes (and stock public "
+            "bases) on different NPU silicon tiers."
+        )
+
+        st.markdown("**Data sources** — two layers:")
+        st.markdown(
+            "- **RTX 5090 reference bake-offs** populate "
+            "`sizer/sizer_bundle.json` via personal-ai-framework's "
+            "`eval/build_sizer_bundle.py`. Cells without a measured "
+            "anchor BW-project from these.\n"
+            "- **Private NPU silicon anchors** live in Streamlit "
+            "secrets (`.streamlit/secrets.toml` locally; Settings → "
+            "Secrets in Cloud). When the selected (tier, model) cell "
+            "matches a measured anchor, the headline tile uses the "
+            "anchor value directly (🟢 \"Measured on real NPU silicon\" "
+            "banner). Full 15-cell grid in the **📡 Measured silicon "
+            "anchors (private)** expander on the main page."
+        )
+
+        st.markdown(
+            f"**Catalog** — {len(MODELS)} models grouped by role: "
+            "🚀 production · 🔬 fine-tune · 📚 stock base · "
+            "⚙️ perf reference. 🔴-prefixed models can't run on the "
+            "currently-selected NPU Tier (dtype mismatch) and sort to "
+            "the bottom of the dropdown. The production model anchors "
+            "the \"Δ vs production\" accuracy column."
+        )
+
+        st.markdown(
+            "**Eval methodology** — semantic-graded pass rates "
+            "(132-sample v2-RAG, GPT-4o binary judge per [docs] "
+            "white paper Finding 4). See **📊 Accuracy details** in "
+            "the main pane for the headline-erosion arc, per-family "
+            "regrade Δ table, and the standing customer guidance."
+        )
+
         st.caption(
-            f"Bundle generated: {bs['bundle_meta'].get('generated_at','?')}\n\n"
-            f"Models measured: {len(bs['models'])}\n\n"
-            f"Source bake-offs: see `sizer_bundle.json` meta."
+            f"Bundle generated: `{_meta.get('generated_at','?')}` · "
+            f"Methodology: `{_meta.get('methodology_version','unstamped')}` "
+            f"· Models measured (5090 bake-offs): {len(bs['models'])} · "
+            "Source bake-offs: see `sizer_bundle.json` meta."
         )
 
 
