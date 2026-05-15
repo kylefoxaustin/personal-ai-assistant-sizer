@@ -629,184 +629,193 @@ if r["source"] == "dtype_mismatch":
     )
     st.stop()
 
-feas_note = ""
-if r["feasibility"]["verdict"] == "tight":
-    feas_note = (f"  ⚠️ _Tight fit_ — only "
-                 f"{r['feasibility']['headroom_gb']} GB headroom "
-                 f"({r['feasibility']['required_gb']} GB needed of "
-                 f"{r['feasibility']['available_gb']} GB).")
-# Phase 2 source classification per [backend] 2026-04-29 12:38 / [docs]
-# 12:34 spec: each cell carries one of five projection-source states.
-# 🟢 measured / measured_anchor — direct silicon measurement
-# 🟡 same_class_anchor          — BW-scaled within tier_family from anchor
-# 🟠 cross_class                — two-floor MAX(BW, compute), no anchor
-# 🔴 wont_fit / dtype_mismatch  — already handled above (st.stop)
-_regime_note = ""
-if r.get("regime"):
-    _regime_word = "BW-bound" if r["regime"] == "bw_bound" else "compute-bound"
-    _regime_note = f" Decode regime: **{_regime_word}**."
-if r["source"] == "measured_silicon_anchor":
-    # Hot-swap from Streamlit secrets — measured on real NPU silicon
-    # (numbers private; see the standalone "📡 Measured silicon anchors"
-    # expander below for the source grid). Per [docs] 2026-05-14 14:37.
-    _meta = r.get("_silicon_anchor_meta", {})
-    st.success(
-        f"🟢 **Measured on real NPU silicon** "
-        f"(`{_meta.get('spec_tier_precision','?')}` "
-        f"× `{_meta.get('spec_model_key','?')}`, "
-        f"measured {_meta.get('measured_date','?')}). "
-        f"Headline decode rate is the silicon measurement, not a "
-        f"BW-projection from RTX 5090. See the standalone "
-        f"\"📡 Measured silicon anchors (private)\" expander below for "
-        f"the full grid + bandwidth derivation under the current "
-        f"NPU_share."
-        f"{_regime_note}"
-        f"{feas_note}"
+
+# ───────────────────────── Tabs (2026-05-15) ─────────────────────────
+# Per Kyle 2026-05-15: PAI sizer mirrors keyhole-sizer's tab UX. Each
+# section below renders inside its own tab so users can focus on one
+# view at a time without scrolling through the whole page.
+(_tab_overview, _tab_accuracy, _tab_precision, _tab_performance,
+ _tab_kpis, _tab_cost, _tab_data) = st.tabs([
+    "Overview",
+    "Accuracy",
+    "Precision",
+    "Performance",
+    "KPIs",
+    "Cost",
+    "Data",
+])
+
+with _tab_overview:
+    feas_note = ""
+    if r["feasibility"]["verdict"] == "tight":
+        feas_note = (f"  ⚠️ _Tight fit_ — only "
+                     f"{r['feasibility']['headroom_gb']} GB headroom "
+                     f"({r['feasibility']['required_gb']} GB needed of "
+                     f"{r['feasibility']['available_gb']} GB).")
+    # Phase 2 source classification per [backend] 2026-04-29 12:38 / [docs]
+    # 12:34 spec: each cell carries one of five projection-source states.
+    # 🟢 measured / measured_anchor — direct silicon measurement
+    # 🟡 same_class_anchor          — BW-scaled within tier_family from anchor
+    # 🟠 cross_class                — two-floor MAX(BW, compute), no anchor
+    # 🔴 wont_fit / dtype_mismatch  — already handled above (st.stop)
+    _regime_note = ""
+    if r.get("regime"):
+        _regime_word = "BW-bound" if r["regime"] == "bw_bound" else "compute-bound"
+        _regime_note = f" Decode regime: **{_regime_word}**."
+    if r["source"] == "measured_silicon_anchor":
+        # Hot-swap from Streamlit secrets — measured on real NPU silicon
+        # (numbers private; see the standalone "📡 Measured silicon anchors"
+        # expander below for the source grid). Per [docs] 2026-05-14 14:37.
+        _meta = r.get("_silicon_anchor_meta", {})
+        st.success(
+            f"🟢 **Measured on real NPU silicon** "
+            f"(`{_meta.get('spec_tier_precision','?')}` "
+            f"× `{_meta.get('spec_model_key','?')}`, "
+            f"measured {_meta.get('measured_date','?')}). "
+            f"Headline decode rate is the silicon measurement, not a "
+            f"BW-projection from RTX 5090. See the standalone "
+            f"\"📡 Measured silicon anchors (private)\" expander below for "
+            f"the full grid + bandwidth derivation under the current "
+            f"NPU_share."
+            f"{_regime_note}"
+            f"{feas_note}"
+        )
+    elif r["source"] == "measured":
+        st.success(
+            f"🟢 **Measured** on RTX 5090 — direct bake-off baseline."
+            f"{_regime_note}"
+            f"{feas_note}"
+        )
+    elif r["source"] == "measured_anchor":
+        # Direct hit on a tier-level Skippy bake-off anchor (target IS the
+        # anchor tier, no memory upgrade). Decode is silicon-anchored.
+        st.success(
+            f"🟢 **Decode anchored** on {hw.tier_lookup_name} silicon "
+            f"(Skippy bake-off measurement). Prefill held at the measured "
+            f"compute-bound rate."
+            f"{_regime_note}"
+            f"{feas_note}"
+        )
+    elif r["source"] == "same_class_anchor":
+        # Same memory-class as a tier with a measured anchor; BW-scaled
+        # within the family. Most common case for High stock + MoE
+        # (BW-equal to Mid at stock, same family) or Mid + LPDDR upgrade
+        # (memory-overlay BW-scaling within the same silicon family).
+        _bw_marker = " · ×BW-upgrade" if getattr(hw, "bw_projected", False) else ""
+        st.info(
+            f"🟡 **Same-class projection** — BW-scaled from a measured anchor "
+            f"in tier-family `{hw.tier_family}`{_bw_marker}. Higher confidence "
+            f"than cross-class extrapolation; lower than a direct measurement "
+            f"on this exact tier."
+            f"{_regime_note}"
+            f"{feas_note}"
+        )
+    elif r["source"] == "cross_class":
+        # No anchor in the target's tier family; two-floor MAX(BW_floor,
+        # compute_floor) derived from first principles. Lower confidence
+        # than same-class — kernel-efficiency factors on this silicon class
+        # haven't been validated against a measurement yet.
+        st.warning(
+            f"🟠 **Cross-class extrapolation** — no measured anchor in tier-"
+            f"family `{hw.tier_family}` for this model. Decode tok/s derived "
+            f"from two-floor MAX(BW_floor, compute_floor) physics. Lower "
+            f"confidence than same-class projection; numbers are directional."
+            f"{_regime_note}"
+            f"{feas_note}"
+        )
+    else:
+        # Defensive fallback — shouldn't be reachable given the explicit cases
+        # above, but keeps the banner from crashing if a new source label gets
+        # added without UI handling.
+        st.info(
+            f"⚪ **{r['source']}** — projection state not recognized by UI."
+            f"{feas_note}"
+        )
+
+    # Top-line numeric metrics
+    # Per [docs] 2026-04-29 11:01 spec: TTFT (the latency users feel) replaces
+    # the prefill-rate tile. End-to-end + decode duration get clearer labels.
+    # Prefill rate stays accessible via the TTFT tile's hover-help for the
+    # kernel-engineer audience that wants the underlying compute rate.
+    _bw_proj = getattr(hw, "bw_projected", False)
+    _proj_suffix = " (BW-proj)" if _bw_proj else ""
+    # NPU_share marker: append "(@ X%)" when the user has scaled away from
+    # 100% (the Skippy bake-off measurement condition). Per [docs] 14:38
+    # spec: 100% reflects the original measurement; other shares are
+    # what-if scalings. Applies to BW-affected tiles (Decode tok/s, E2E
+    # latency, Decode duration) — TTFT is compute-bound and doesn't move.
+    _share_marker = "" if abs(npu_share - 1.0) < 1e-6 else f" (@ {int(npu_share*100)}% NPU)"
+    _proj_help = (
+        "\n\n**BW-proj**: scaled from the RTX 5090 reference by the upgraded "
+        "peak-BW ratio (active-param weights are BW-bound on MoE). TTFT held "
+        "at stock — prefill is compute-bound. Memory swap is what-if; not a "
+        "vendor measurement of LPDDR6 silicon."
+    ) if _bw_proj else ""
+
+    # TTFT = total - decode = host overhead + prefill compute time.
+    # Internally consistent with the End-to-end / Decode-duration tiles
+    # (same accounting). Held at stock under memory upgrade because
+    # project_llm uses stock_mem_bandwidth_gbs for prefill scaling when
+    # bw_projected=True — prefill is compute-bound, not BW-bound.
+    _ttft_s = max(r['total_s'] - r['decode_s'], 0.0)
+    # Format-by-magnitude: integer ms below 100 ms (where ms precision
+    # matters for sub-100-ms TTFTs), 2-decimal seconds above. Using
+    # 2-decimal seconds for the 100ms-1s range avoids a "904 ms vs 903 ms"
+    # 1ms display flicker between stock and memory-upgraded variants
+    # caused by project_llm rounding total_s and decode_s independently
+    # before we subtract them — the underlying TTFT is held exactly, but
+    # the rounded difference can drift by a millisecond.
+    if _ttft_s < 0.1:
+        _ttft_value = f"{_ttft_s*1000:.0f} ms"
+    else:
+        _ttft_value = f"{_ttft_s:.2f} s"
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        f"Decode tok/s{_proj_suffix}{_share_marker}",
+        f"{r['decode_tok_s']:.1f}",
+        help=(
+            "Sustained generation rate on this workload. Bandwidth-bound "
+            "regime — active-param weights stream through DRAM per decoded "
+            "token, so tok/s scales with effective BW × NPU_share." + _proj_help
+        ),
     )
-elif r["source"] == "measured":
-    st.success(
-        f"🟢 **Measured** on RTX 5090 — direct bake-off baseline."
-        f"{_regime_note}"
-        f"{feas_note}"
+    c2.metric(
+        "TTFT",
+        _ttft_value,
+        help=(
+            f"Time to first token — the latency users feel from request "
+            f"to first generated token. Host overhead + prefill compute. "
+            f"Underlying prefill rate: **{r['prefill_tok_s']:.0f} tok/s**. "
+            "Compute-bound (TOPS, not BW), so a memory-only swap doesn't "
+            "move it — held at stock under any LPDDR5T / LPDDR6 upgrade. "
+            "NPU_share also doesn't affect TTFT (the memory bus isn't the "
+            "bottleneck for prefill compute)."
+        ),
     )
-elif r["source"] == "measured_anchor":
-    # Direct hit on a tier-level Skippy bake-off anchor (target IS the
-    # anchor tier, no memory upgrade). Decode is silicon-anchored.
-    st.success(
-        f"🟢 **Decode anchored** on {hw.tier_lookup_name} silicon "
-        f"(Skippy bake-off measurement). Prefill held at the measured "
-        f"compute-bound rate."
-        f"{_regime_note}"
-        f"{feas_note}"
+    c3.metric(
+        f"End-to-end latency{_proj_suffix}{_share_marker}",
+        f"{r['total_s']:.2f} s",
+        help=(
+            "Total wall-clock latency: host overhead + prefill + decode. "
+            "Decode portion shrinks under a memory upgrade or grows when "
+            "NPU_share drops (both BW-bound effects); TTFT is unaffected "
+            "(compute-bound)." + _proj_help
+        ),
     )
-elif r["source"] == "same_class_anchor":
-    # Same memory-class as a tier with a measured anchor; BW-scaled
-    # within the family. Most common case for High stock + MoE
-    # (BW-equal to Mid at stock, same family) or Mid + LPDDR upgrade
-    # (memory-overlay BW-scaling within the same silicon family).
-    _bw_marker = " · ×BW-upgrade" if getattr(hw, "bw_projected", False) else ""
-    st.info(
-        f"🟡 **Same-class projection** — BW-scaled from a measured anchor "
-        f"in tier-family `{hw.tier_family}`{_bw_marker}. Higher confidence "
-        f"than cross-class extrapolation; lower than a direct measurement "
-        f"on this exact tier."
-        f"{_regime_note}"
-        f"{feas_note}"
-    )
-elif r["source"] == "cross_class":
-    # No anchor in the target's tier family; two-floor MAX(BW_floor,
-    # compute_floor) derived from first principles. Lower confidence
-    # than same-class — kernel-efficiency factors on this silicon class
-    # haven't been validated against a measurement yet.
-    st.warning(
-        f"🟠 **Cross-class extrapolation** — no measured anchor in tier-"
-        f"family `{hw.tier_family}` for this model. Decode tok/s derived "
-        f"from two-floor MAX(BW_floor, compute_floor) physics. Lower "
-        f"confidence than same-class projection; numbers are directional."
-        f"{_regime_note}"
-        f"{feas_note}"
-    )
-else:
-    # Defensive fallback — shouldn't be reachable given the explicit cases
-    # above, but keeps the banner from crashing if a new source label gets
-    # added without UI handling.
-    st.info(
-        f"⚪ **{r['source']}** — projection state not recognized by UI."
-        f"{feas_note}"
+    c4.metric(
+        f"Decode duration{_proj_suffix}{_share_marker}",
+        f"{r['decode_s']:.2f} s",
+        help=(
+            f"Wall-clock time spent generating decode tokens "
+            f"(decode_tokens / decode_tok_s). Scales inversely with the "
+            f"decode rate (which itself scales with effective BW × NPU_share)."
+            + _proj_help
+        ),
     )
 
-# Top-line numeric metrics
-# Per [docs] 2026-04-29 11:01 spec: TTFT (the latency users feel) replaces
-# the prefill-rate tile. End-to-end + decode duration get clearer labels.
-# Prefill rate stays accessible via the TTFT tile's hover-help for the
-# kernel-engineer audience that wants the underlying compute rate.
-_bw_proj = getattr(hw, "bw_projected", False)
-_proj_suffix = " (BW-proj)" if _bw_proj else ""
-# NPU_share marker: append "(@ X%)" when the user has scaled away from
-# 100% (the Skippy bake-off measurement condition). Per [docs] 14:38
-# spec: 100% reflects the original measurement; other shares are
-# what-if scalings. Applies to BW-affected tiles (Decode tok/s, E2E
-# latency, Decode duration) — TTFT is compute-bound and doesn't move.
-_share_marker = "" if abs(npu_share - 1.0) < 1e-6 else f" (@ {int(npu_share*100)}% NPU)"
-_proj_help = (
-    "\n\n**BW-proj**: scaled from the RTX 5090 reference by the upgraded "
-    "peak-BW ratio (active-param weights are BW-bound on MoE). TTFT held "
-    "at stock — prefill is compute-bound. Memory swap is what-if; not a "
-    "vendor measurement of LPDDR6 silicon."
-) if _bw_proj else ""
-
-# TTFT = total - decode = host overhead + prefill compute time.
-# Internally consistent with the End-to-end / Decode-duration tiles
-# (same accounting). Held at stock under memory upgrade because
-# project_llm uses stock_mem_bandwidth_gbs for prefill scaling when
-# bw_projected=True — prefill is compute-bound, not BW-bound.
-_ttft_s = max(r['total_s'] - r['decode_s'], 0.0)
-# Format-by-magnitude: integer ms below 100 ms (where ms precision
-# matters for sub-100-ms TTFTs), 2-decimal seconds above. Using
-# 2-decimal seconds for the 100ms-1s range avoids a "904 ms vs 903 ms"
-# 1ms display flicker between stock and memory-upgraded variants
-# caused by project_llm rounding total_s and decode_s independently
-# before we subtract them — the underlying TTFT is held exactly, but
-# the rounded difference can drift by a millisecond.
-if _ttft_s < 0.1:
-    _ttft_value = f"{_ttft_s*1000:.0f} ms"
-else:
-    _ttft_value = f"{_ttft_s:.2f} s"
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric(
-    f"Decode tok/s{_proj_suffix}{_share_marker}",
-    f"{r['decode_tok_s']:.1f}",
-    help=(
-        "Sustained generation rate on this workload. Bandwidth-bound "
-        "regime — active-param weights stream through DRAM per decoded "
-        "token, so tok/s scales with effective BW × NPU_share." + _proj_help
-    ),
-)
-c2.metric(
-    "TTFT",
-    _ttft_value,
-    help=(
-        f"Time to first token — the latency users feel from request "
-        f"to first generated token. Host overhead + prefill compute. "
-        f"Underlying prefill rate: **{r['prefill_tok_s']:.0f} tok/s**. "
-        "Compute-bound (TOPS, not BW), so a memory-only swap doesn't "
-        "move it — held at stock under any LPDDR5T / LPDDR6 upgrade. "
-        "NPU_share also doesn't affect TTFT (the memory bus isn't the "
-        "bottleneck for prefill compute)."
-    ),
-)
-c3.metric(
-    f"End-to-end latency{_proj_suffix}{_share_marker}",
-    f"{r['total_s']:.2f} s",
-    help=(
-        "Total wall-clock latency: host overhead + prefill + decode. "
-        "Decode portion shrinks under a memory upgrade or grows when "
-        "NPU_share drops (both BW-bound effects); TTFT is unaffected "
-        "(compute-bound)." + _proj_help
-    ),
-)
-c4.metric(
-    f"Decode duration{_proj_suffix}{_share_marker}",
-    f"{r['decode_s']:.2f} s",
-    help=(
-        f"Wall-clock time spent generating decode tokens "
-        f"(decode_tokens / decode_tok_s). Scales inversely with the "
-        f"decode rate (which itself scales with effective BW × NPU_share)."
-        + _proj_help
-    ),
-)
-
-
-# ── Accuracy details ──
-# Originally moved out of the sidebar 2026-05-11 (dd17baa parity);
-# 2026-05-15 repositioned directly below the 4 headline tiles per
-# Kyle. The accuracy story (catalog comparison + Finding 4
-# methodology surface) belongs adjacent to the perf headline, not
-# above it — the user wants "here's the perf, here's the accuracy
-# that goes with it" reading flow.
-if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_only"):
-    with st.expander("📊 Accuracy details"):
+with _tab_accuracy:
+    if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_only"):
         st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
         st.markdown("---")
         st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
@@ -1043,1188 +1052,1190 @@ if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_on
         )
 
 
-st.markdown("---")
-
-
-# ───────────────────────── Precision capability card ─────────────────────────
-# What compute precisions can this tier actually execute, and what's the
-# measured quality delta for each? Populated from Skippy's 2026-04-23 Qwen
-# 2.5 14B quantization experiments — fp16/FP8 on A6000 pod, INT8 on H100 pod,
-# Q4_K_M on Skippy's native-RAG 5090 run (methodology-different, shown for
-# context).
-
-st.subheader("Precision capability")
-st.caption(
-    f"What compute precisions **{hw.name}** can execute, and the measured "
-    f"quality delta for each precision on Qwen 2.5 14B / Skippy's v2+RAG eval "
-    f"(44 prompts × 3 samples). Green = within ~2pp noise floor; "
-    f"amber = small but real; red = meaningful regression."
-)
-
-_cap = tier_precision_capability(hw.tier_lookup_name)
-# Present 4 precision columns: bf16/fp16, FP8, INT8, Q4_K_M
-_precision_columns = [
-    ("bf16/fp16", "fp16",  "fp16/bf16"),
-    ("fp8",       "fp8",   "FP8"),
-    ("int8",      "int8",  "INT8 (W8A8)"),
-    ("q4_km",     "q4_km", "Q4_K_M"),
-]
-_cols = st.columns(4)
-for col, (cap_key, quality_key, display) in zip(_cols, _precision_columns):
-    cap_level = _cap.get(cap_key, "none")
-    pm = MEASURED_PRECISION_QUALITY.get(quality_key)
-    speed = MEASURED_PRECISION_SPEED.get(quality_key)
-
-    # Top row: precision name + capability glyph, color-coded
-    cap_color = capability_color(cap_level)
-    cap_glyph = capability_badge(cap_level)
-    cap_text = capability_label(cap_level)
-    with col:
-        st.markdown(
-            f"<div style='padding: 10px; border-radius: 6px; "
-            f"background:#1f2937; border-left: 4px solid {cap_color};'>"
-            f"<div style='font-size: 0.85rem; color: #9ca3af;'>{display}</div>"
-            f"<div style='font-size: 1.3rem; color: {cap_color}; font-weight: 600;'>"
-            f"{cap_glyph} {cap_text}</div>"
-            + (
-                f"<div style='font-size: 0.8rem; color: {quality_color(pm)}; "
-                f"margin-top: 6px;'>Quality: {quality_badge_text(pm)}</div>"
-                if pm is not None and cap_level != "none" else
-                f"<div style='font-size: 0.8rem; color: #6b7280; margin-top: 6px;'>"
-                f"Quality: —</div>"
-            )
-            + (
-                f"<div style='font-size: 0.8rem; color: #9ca3af; margin-top: 4px;'>"
-                f"Speed (5090): {speed['tok_s']:.1f} tok/s "
-                f"({speed['speedup_vs_fp16']:.2f}× fp16)</div>"
-                if speed is not None and cap_level != "none" else ""
-            )
-            + "</div>",
-            unsafe_allow_html=True,
-        )
-
-with st.expander("How to read this / what was measured", expanded=False):
-    st.markdown("""
-**Capability glyphs:**
-- ✓ **tensor-core** — native tensor-core matmul path (fast, preferred)
-- ⚠︎ **tensor-core (compat path)** — hardware has tensor-core INT8 but
-  only via binary-compatible pre-compiled kernels (e.g. sm80 IMMA on
-  SM120). Works for workloads with a pre-compiled kernel library
-  (TensorRT with YOLO engines); blocked for workloads that compile
-  fresh kernels per-arch (vLLM/CUTLASS LLM serving). LLM INT8 fails
-  on these tiers today.
-- ⚠︎ **CUDA-core only** — legacy CUDA-core path (e.g. DP4A). Retained
-  for historical labels; no tier currently uses this category after
-  [backend]'s 2026-04-24 ncu probe clarified the 5090 case.
-- ✗ **not supported** — no hardware path; would need CPU fallback or
-  a different model quantization scheme
-
-**Quality colors** (delta vs fp16 on Skippy's v2+RAG eval, 132 samples):
-- 🟢 **within ±2pp** — indistinguishable from fp16 (noise floor)
-- 🟡 **2–5pp** — small but real drift; inspect per-category breakdown
-- 🔴 **>5pp** — meaningful capability regression; reconsider the precision
-
-**Why INT8 shows tensor-core (compat) on 5090 but native tensor-core on
-every NPU tier:** consumer Blackwell (SM120) ships without a native
-INT8 kernel library. The HARDWARE still has INT8 tensor-core capability
-— ncu profiling of TRT YOLO INT8 engines on the 5090 shows non-zero
-tensor-pipe instruction counts with sm80 IMMA kernel names, so the
-Ampere binary-compat path engages real tensor cores. But ecosystems
-that compile fresh per-arch (vLLM's CUTLASS W8A8) refuse SM120 because
-the SM120-specific templates don't exist yet. Edge NPUs (NXP Neutron,
-Kinara Ara, Hailo-8 class) have dedicated INT8 matmul engines with
-vendor-provided kernel libraries and don't share this constraint.
-
-**INT8 measured -3.8pp caveat:** the 5 regressed samples are all on two
-refuse-to-answer prompts where both fp16 and INT8 correctly refused.
-INT8's hedge used family-level chip names ("various NXP i.MX processors")
-while fp16's hedge named specific SKUs ("NXP i.MX 8QuadMax"). Content
-is equivalent; only the keyword-match grader sees a difference.
-
-**Q4_K_M quality is from a different methodology** (Skippy's native RAG
-path via llama-cpp) and isn't directly comparable to the fp16/FP8/INT8
-shim-path measurements. Shown as context, not as a head-to-head delta.
-
-**Measurement provenance:**
-- fp16 + FP8: A6000 48GB pod, vLLM shim, v2+RAG (2026-04-23 FP8 runbook)
-- INT8 W8A8: H100 80GB SXM pod, SmoothQuant+GPTQ 512 calib, same shim
-- Q4_K_M: RTX 5090 local, Skippy's native RAG pipeline
-""")
-
-st.markdown("---")
-
-
-# ───────────────────────── Private silicon anchors ─────────────────────────
-# Measured NPU + CNN values stored in Streamlit secrets (sensitive — never
-# enter chat, git, or Drive). Schema: 9 LLM cells (3 tier-precision × 3
-# models) + 6 CNN cells (2 tier-precision × 3 CNN variants). Loader returns
-# None on missing/zero values → cell renders as "not measured" placeholder.
-# Spec: personal-ai-framework docs/private_anchor_secrets_spec.md (65bf89c).
-# Vendored 2026-05-14 per [docs] 13:24 + 13:31 bus messages.
-
-with st.expander("📡 Measured silicon anchors (private)", expanded=False):
-    st.caption(
-        f"Direct measurements on real NPU silicon. Numbers live in "
-        f"Streamlit secrets (`sizer/npu_anchors.py` loads them) — this "
-        f"surface confirms they loaded. Bandwidth derivation uses your "
-        f"selected **NPU_share = {int(npu_share*100)}%** as the share "
-        f"override (change the NPU_share selector in the sidebar to "
-        f"re-derive). Cells reading 'not measured' have placeholder "
-        f"zeros in secrets — populate `.streamlit/secrets.toml` locally "
-        f"or in Streamlit Cloud Secrets to surface them."
-    )
-
-    # ── LLM throughput: 3 tier-precision rows × 3 models ──
-    st.markdown("**LLM throughput**")
-    _llm_tier_rows = [
-        ("NPU Mid INT8",       "mid",  "int8"),
-        ("NPU High INT8",      "high", "int8"),
-        ("NPU High FP",        "high", "fp"),
-    ]
-    _llm_model_cols = [
-        ("Qwen3 30B-A3B MoE",  "qwen3_30b_a3b_moe"),
-        ("Qwen 2.5 32B dense", "qwen25_32b_dense"),
-        ("Qwen 2.5 7B dense",  "qwen25_7b_dense"),
-    ]
-    for _tier_label, _tier_key, _prec_key in _llm_tier_rows:
-        st.markdown(f"*{_tier_label}*")
-        _cols = st.columns(3)
-        for _col, (_model_label, _model_key) in zip(_cols, _llm_model_cols):
-            _anchor = load_llm_anchor(_tier_key, _prec_key, _model_key)
-            with _col:
-                if _anchor is None:
-                    st.metric(f"⏸ {_model_label}", "not measured")
-                else:
-                    _bpt = _anchor.bytes_per_token(share_override=npu_share)
-                    st.metric(
-                        f"{_anchor.badge} {_model_label}",
-                        f"{_anchor.tokps:.1f} tok/s",
-                        delta=f"{_bpt/1e6:.0f} MB/tok @ {int(npu_share*100)}% BW share",
-                        delta_color="off",
-                    )
-
-    st.markdown("---")
-
-    # ── CNN latency: 2 tier-precision rows × 3 CNN variants ──
-    st.markdown("**CNN latency**")
-    _cnn_tier_rows = [
-        ("NPU Mid INT8",  "mid",  "int8"),
-        ("NPU High INT8", "high", "int8"),
-    ]
-    _cnn_model_cols = [
-        ("ResNet-50 W4",  "resnet50_w4",  "224×224"),
-        ("YOLOv8n W4",    "yolov8n_w4",   "640×640"),
-        ("YOLOv8n W8",    "yolov8n_w8",   "640×640"),
-    ]
-    for _tier_label, _tier_key, _prec_key in _cnn_tier_rows:
-        st.markdown(f"*{_tier_label}*")
-        _cols = st.columns(3)
-        for _col, (_cnn_label, _cnn_key, _res) in zip(_cols, _cnn_model_cols):
-            _anchor = load_cnn_anchor(_tier_key, _prec_key, _cnn_key)
-            with _col:
-                if _anchor is None:
-                    st.metric(f"⏸ {_cnn_label}", "not measured")
-                else:
-                    st.metric(
-                        f"{_anchor.badge} {_cnn_label}",
-                        f"{_anchor.ms_per_inference:.2f} ms",
-                        delta=f"{_anchor.fps:.1f} FPS · {_res}",
-                        delta_color="off",
-                    )
-
-    st.caption(
-        "Private silicon anchors. Numbers loaded from Streamlit secrets "
-        "via `sizer/npu_anchors.py`. Per spec: peak_bw × bw_share × "
-        "bw_efficiency derives achieved BW; the share override at "
-        "render-time lets the NPU_share selector re-derive without "
-        "re-reading secrets. **The headline decode-rate tile at the top "
-        "of the page uses these values directly** when the selected "
-        "(tier, model) cell has a measured anchor (see the source banner "
-        "for the cell's actual state). Cells without measurements fall "
-        "back to RTX 5090 BW-projection."
-    )
-
-
-st.markdown("---")
-
-# Per-stage breakdown bar chart
-stage_ms = {
-    "Host (retrieval + agent)": r["host_ms"],
-    "Prefill": r["prefill_s"] * 1000,
-    "Decode": r["decode_s"] * 1000,
-}
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=list(stage_ms.keys()),
-    y=list(stage_ms.values()),
-    text=[f"{v:,.0f} ms" for v in stage_ms.values()],
-    textposition="outside",
-    marker_color=["#6b7280", "#3b82f6", "#10b981"],
-))
-import math
-_ymax = max(stage_ms.values())
-fig.update_layout(
-    title=f"Per-stage time — {MODELS[model_key]['display_name']} / {tier_name}",
-    yaxis_title="Milliseconds (log)",
-    yaxis_type="log",
-    # Log-scale range: from 1ms to 1 decade above the tallest bar, so the
-    # "outside" text labels don't clip against the top edge.
-    yaxis=dict(gridcolor="#374151",
-               range=[0, math.log10(max(_ymax, 10)) + 0.6]),
-    height=420,
-    margin=dict(t=60, b=40, l=40, r=20),
-    plot_bgcolor="#1f2937",
-    paper_bgcolor="#111827",
-    font=dict(color="#f3f4f6"),
-    xaxis=dict(showgrid=False),
-)
-st.plotly_chart(fig, width="stretch")
-
-
-# ───────────────────────── Decode-vs-context curve ─────────────────────────
-# Decode throughput is not a constant per model — it falls as context grows
-# because per-step attention traffic scales with sequence length. This chart
-# shows the interpolated curve across standard context lengths on the
-# selected tier, with the measured 5090 anchor points called out.
-
-st.subheader("Decode tok/s vs context length")
-st.caption(
-    f"How decode throughput scales with prompt/context length on **{hw.name}**. "
-    f"Solid line = interpolated between measured 5090 calibration points "
-    f"(dots); dashed region = extrapolated beyond measured range "
-    f"(calibration ceiling = 12.7K tokens today). For non-5090 tiers, the "
-    f"whole curve is BW-scaled by {hw.effective_bandwidth_gbs / 1523.2:.3f}× "
-    f"(hw effective BW / 5090 effective BW). "
-    f"Compiler quality {compiler_quality:.2f} applies to projected tiers."
-)
-
-# Standard log-spaced context lengths to evaluate
-_CTX_GRID = [100, 200, 400, 700, 1000, 2000, 4000, 7000, 10000, 13000,
-             16000, 24000, 32000]
-
-# Build curves for BOTH models on the selected tier (so users can compare
-# MoE vs dense context-scaling on their silicon of interest)
-_curve_fig = go.Figure()
-_model_colors = {
-    "qwen2.5-14b-q4-dense": "#60a5fa",   # blue
-    "qwen3-30b-a3b-q4-moe": "#34d399",   # green
-}
-
-_max_measured_ctx_any = 0  # for the extrapolation shading
-for mk in MODELS.keys():
-    try:
-        anchors = calibration_anchors(mk)
-    except Exception:
-        continue
-    if not anchors:
-        continue
-
-    max_measured = max(a[0] for a in anchors)
-    _max_measured_ctx_any = max(_max_measured_ctx_any, max_measured)
-
-    # Curve line (solid within measured range, dashed beyond)
-    xs_in, ys_in = [], []
-    xs_out, ys_out = [], []
-    for ctx in _CTX_GRID:
-        r = decode_tok_s_at_context(mk, hw, ctx,
-                                     compiler_quality=compiler_quality,
-                                     npu_share=npu_share)
-        if ctx <= max_measured:
-            xs_in.append(ctx)
-            ys_in.append(r["decode_tok_s"])
-        else:
-            if not xs_out:  # start the dashed line at the last measured pt
-                xs_out.append(max_measured)
-                last_r = decode_tok_s_at_context(mk, hw, max_measured,
-                                                  compiler_quality=compiler_quality,
-                                                  npu_share=npu_share)
-                ys_out.append(last_r["decode_tok_s"])
-            xs_out.append(ctx)
-            ys_out.append(r["decode_tok_s"])
-
-    color = _model_colors.get(mk, "#f59e0b")
-    display = MODELS[mk]["display_name"]
-
-    # In-range (solid)
-    _curve_fig.add_trace(go.Scatter(
-        x=xs_in, y=ys_in, mode="lines", name=display,
-        line=dict(color=color, width=2.5),
-        hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s<extra></extra>",
-    ))
-    # Extrapolated (dashed)
-    if xs_out:
-        _curve_fig.add_trace(go.Scatter(
-            x=xs_out, y=ys_out, mode="lines",
-            name=f"{display} (extrapolated)",
-            line=dict(color=color, width=2.0, dash="dash"),
-            showlegend=False,
-            hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s (extrapolated)<extra></extra>",
-        ))
-
-    # Measured anchor dots — scaled to the selected tier
-    ax_xs = [a[0] for a in anchors]
-    ax_ys = []
-    ax_labels = []
-    for pt, ts_5090, wl in anchors:
-        r = decode_tok_s_at_context(mk, hw, pt,
-                                     compiler_quality=compiler_quality,
-                                     npu_share=npu_share)
-        ax_ys.append(r["decode_tok_s"])
-        ax_labels.append(wl)
-    _curve_fig.add_trace(go.Scatter(
-        x=ax_xs, y=ax_ys, mode="markers",
-        name=f"{display} — measured anchors",
-        marker=dict(color=color, size=9,
-                    line=dict(color="#ffffff", width=1.5)),
-        hovertext=ax_labels, hoverinfo="text+x+y",
-        showlegend=False,
-    ))
-
-# Extrapolation zone shading
-if _max_measured_ctx_any > 0:
-    _curve_fig.add_vrect(
-        x0=_max_measured_ctx_any, x1=_CTX_GRID[-1],
-        fillcolor="#6b7280", opacity=0.10, line_width=0,
-        annotation_text="extrapolated — run bake-offs at longer contexts to fill",
-        annotation_position="top right",
-        annotation=dict(font=dict(size=11, color="#9ca3af")),
-    )
-
-_curve_fig.update_layout(
-    title=f"Decode throughput vs context length on {hw.name}",
-    xaxis=dict(title="Context length (tokens)", type="log",
-               gridcolor="#374151"),
-    yaxis=dict(title="Decode tok/s", gridcolor="#374151",
-               rangemode="tozero"),
-    height=420,
-    margin=dict(t=60, b=40, l=50, r=20),
-    plot_bgcolor="#1f2937",
-    paper_bgcolor="#111827",
-    font=dict(color="#f3f4f6"),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1),
-)
-st.plotly_chart(_curve_fig, width="stretch")
-
-# ─── What-if model projection card ───
-# Populated from the sidebar expander. Shown only when the user enables
-# it so we don't clutter the default view.
-if st.session_state.get("k_whatif_enable"):
-    st.markdown("---")
-    st.subheader(f"What-if: **{_whatif_name}** on {hw.name}")
-
-    _whatif_active_params = int(_whatif_active_b * 1e9)
-    _whatif_total_params = int(_whatif_total_b * 1e9)
-
-    # Project decode tok/s at the current workload's context length
-    _wi = project_what_if_decode_tok_s(
-        active_params=_whatif_active_params,
-        bytes_per_param=_whatif_bpp,
-        is_moe=_whatif_is_moe,
-        hw=hw,
-        ctx_tokens=prompt_tokens,
-        compiler_quality=compiler_quality,
-        npu_share=npu_share,
-    )
-    # Memory feasibility at prompt+decode total context
-    _wm = what_if_memory_feasibility(
-        total_params=_whatif_total_params,
-        bytes_per_param=_whatif_bpp,
-        hw=hw,
-        context_tokens=prompt_tokens + decode_tokens,
-        hidden_dim=int(_whatif_hidden),
-        num_layers=int(_whatif_layers),
-    )
-
-    _wc_a, _wc_b, _wc_c, _wc_d = st.columns(4)
-    _wc_a.metric("Decode tok/s", f"{_wi['decode_tok_s']:.1f}",
-                 delta=f"{_wi['speedup_vs_current_skippy']:.2f}× vs current Skippy")
-    _wc_b.metric("Bytes/token decode",
-                 f"{_wi['bytes_per_token']/1e9:.2f} GB",
-                 delta=f"{_wi['anchor_bytes_per_token']/_wi['bytes_per_token']:.2f}× vs {_wi['anchor_display_name'].split(' ')[0]} anchor",
-                 delta_color="normal")
-    _wc_c.metric("VRAM required",
-                 f"{_wm['required_gb']:.1f} GB",
-                 delta=f"{_wm['headroom_gb']:+.1f} GB headroom",
-                 delta_color="normal")
-    _wc_d.metric("Feasibility", _wm['verdict'].replace("_", " "))
-
-    # Fit/tight/won't-fit banner
-    if _wm['verdict'] == "wont_fit":
-        st.error(
-            f"🔴 **Won't fit** on {hw.name} at {prompt_tokens + decode_tokens:,} "
-            f"token context. Weights = {_wm['breakdown']['weights_gb']} GB + "
-            f"KV = {_wm['breakdown']['kv_cache_gb']} GB + "
-            f"overhead = {_wm['breakdown']['overhead_gb']} GB = "
-            f"{_wm['required_gb']} GB, only {_wm['available_gb']} GB available. "
-            f"Drop context length, use a smaller quant, or move up a tier."
-        )
-    elif _wm['verdict'] == "tight":
-        st.warning(
-            f"🟡 **Tight fit** — {_wm['headroom_gb']} GB headroom (<15% of "
-            f"{_wm['available_gb']} GB). Any runtime overhead growth risks OOM."
-        )
     else:
-        st.success(
-            f"🟢 **Fits comfortably** — {_wm['headroom_gb']} GB headroom on "
-            f"{hw.name} at {prompt_tokens + decode_tokens:,} token context."
+        st.info(
+            "This model has no separate accuracy eval (perf-reference variant). "
+            "Switch the model selector to a 🚀 PROD / 🔬 FT / 📚 BASE row to see "
+            "accuracy details + the Finding 4 methodology surface."
         )
 
-    # Honest summary of the projection
-    _speedup_vs_skippy = _wi['speedup_vs_current_skippy']
-    if _speedup_vs_skippy > 1.2:
-        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
-                    f"faster decode** than current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s) at this context. "
-                    f"Worth bake-offing to verify projected quality.")
-    elif _speedup_vs_skippy < 0.8:
-        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
-                    f"the decode** of current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s). Quality advantage "
-                    f"would need to justify the slowdown.")
-    else:
-        _verdict = (f"**{_whatif_name}** projects **similar decode** to "
-                    f"current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s, "
-                    f"{_speedup_vs_skippy:.2f}×). Net change depends on "
-                    f"quality delta, not speed.")
-    st.info(_verdict)
+with _tab_precision:
+    # ───────────────────────── Precision capability card ─────────────────────────
+    # What compute precisions can this tier actually execute, and what's the
+    # measured quality delta for each? Populated from Skippy's 2026-04-23 Qwen
+    # 2.5 14B quantization experiments — fp16/FP8 on A6000 pod, INT8 on H100 pod,
+    # Q4_K_M on Skippy's native-RAG 5090 run (methodology-different, shown for
+    # context).
 
-    with st.expander("How this projection is computed", expanded=False):
-        st.markdown(f"""
-**Anchor model:** {_wi['anchor_display_name']} (architecture-class match)
+    st.subheader("Precision capability")
+    st.caption(
+        f"What compute precisions **{hw.name}** can execute, and the measured "
+        f"quality delta for each precision on Qwen 2.5 14B / Skippy's v2+RAG eval "
+        f"(44 prompts × 3 samples). Green = within ~2pp noise floor; "
+        f"amber = small but real; red = meaningful regression."
+    )
 
-**Decode scaling law:** decode tok/s is roughly inversely proportional
-to active bytes per decoded token when BW-bound.
+    _cap = tier_precision_capability(hw.tier_lookup_name)
+    # Present 4 precision columns: bf16/fp16, FP8, INT8, Q4_K_M
+    _precision_columns = [
+        ("bf16/fp16", "fp16",  "fp16/bf16"),
+        ("fp8",       "fp8",   "FP8"),
+        ("int8",      "int8",  "INT8 (W8A8)"),
+        ("q4_km",     "q4_km", "Q4_K_M"),
+    ]
+    _cols = st.columns(4)
+    for col, (cap_key, quality_key, display) in zip(_cols, _precision_columns):
+        cap_level = _cap.get(cap_key, "none")
+        pm = MEASURED_PRECISION_QUALITY.get(quality_key)
+        speed = MEASURED_PRECISION_SPEED.get(quality_key)
 
-- Anchor active bytes/token: {_wi['anchor_bytes_per_token']/1e9:.2f} GB
-  ({MODELS[_wi['anchor_model']]['active_params']/1e9:.1f}B active × {MODELS[_wi['anchor_model']]['bytes_per_param']:.2f} bytes/param)
-- What-if active bytes/token: {_wi['bytes_per_token']/1e9:.2f} GB
-  ({_whatif_active_b:.1f}B active × {_whatif_bpp:.2f} bytes/param)
-- Scaling factor: {_wi['speedup_vs_anchor']:.2f}× (anchor bytes / what-if bytes)
+        # Top row: precision name + capability glyph, color-coded
+        cap_color = capability_color(cap_level)
+        cap_glyph = capability_badge(cap_level)
+        cap_text = capability_label(cap_level)
+        with col:
+            st.markdown(
+                f"<div style='padding: 10px; border-radius: 6px; "
+                f"background:#1f2937; border-left: 4px solid {cap_color};'>"
+                f"<div style='font-size: 0.85rem; color: #9ca3af;'>{display}</div>"
+                f"<div style='font-size: 1.3rem; color: {cap_color}; font-weight: 600;'>"
+                f"{cap_glyph} {cap_text}</div>"
+                + (
+                    f"<div style='font-size: 0.8rem; color: {quality_color(pm)}; "
+                    f"margin-top: 6px;'>Quality: {quality_badge_text(pm)}</div>"
+                    if pm is not None and cap_level != "none" else
+                    f"<div style='font-size: 0.8rem; color: #6b7280; margin-top: 6px;'>"
+                    f"Quality: —</div>"
+                )
+                + (
+                    f"<div style='font-size: 0.8rem; color: #9ca3af; margin-top: 4px;'>"
+                    f"Speed (5090): {speed['tok_s']:.1f} tok/s "
+                    f"({speed['speedup_vs_fp16']:.2f}× fp16)</div>"
+                    if speed is not None and cap_level != "none" else ""
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
 
-**Projection math:** anchor decode tok/s at {prompt_tokens:,} context
-(interpolated from the 5 measured anchors) × scaling factor = what-if
-projection. This bakes in the same architecture-specific efficiency
-factors (MoE routing overhead, small-matmul inefficiency) the anchor
-model exhibits, so we don't need a separate efficiency constant.
+    with st.expander("How to read this / what was measured", expanded=False):
+        st.markdown("""
+    **Capability glyphs:**
+    - ✓ **tensor-core** — native tensor-core matmul path (fast, preferred)
+    - ⚠︎ **tensor-core (compat path)** — hardware has tensor-core INT8 but
+      only via binary-compatible pre-compiled kernels (e.g. sm80 IMMA on
+      SM120). Works for workloads with a pre-compiled kernel library
+      (TensorRT with YOLO engines); blocked for workloads that compile
+      fresh kernels per-arch (vLLM/CUTLASS LLM serving). LLM INT8 fails
+      on these tiers today.
+    - ⚠︎ **CUDA-core only** — legacy CUDA-core path (e.g. DP4A). Retained
+      for historical labels; no tier currently uses this category after
+      [backend]'s 2026-04-24 ncu probe clarified the 5090 case.
+    - ✗ **not supported** — no hardware path; would need CPU fallback or
+      a different model quantization scheme
 
-**What this misses:**
-- Per-layer attention shape differences (KV head ratio, head count)
-- Instruction-following / RAG-grounding quality — which is often the
-  actual reason to swap models. Quality requires a real eval run.
-- Runtime-specific optimizations (some models are better-supported in
-  llama-cpp / vLLM than others — real perf can differ from BW-bound
-  projection by ±20%)
+    **Quality colors** (delta vs fp16 on Skippy's v2+RAG eval, 132 samples):
+    - 🟢 **within ±2pp** — indistinguishable from fp16 (noise floor)
+    - 🟡 **2–5pp** — small but real drift; inspect per-category breakdown
+    - 🔴 **>5pp** — meaningful capability regression; reconsider the precision
 
-**How to validate this projection:** download the candidate model's
-Q4_K_M GGUF, run `eval/run_sizer_bakeoffs.py` against a Skippy instance
-serving it, regenerate `sizer_bundle.json`. The new anchors slot
-directly into the calibration curve.
-""")
+    **Why INT8 shows tensor-core (compat) on 5090 but native tensor-core on
+    every NPU tier:** consumer Blackwell (SM120) ships without a native
+    INT8 kernel library. The HARDWARE still has INT8 tensor-core capability
+    — ncu profiling of TRT YOLO INT8 engines on the 5090 shows non-zero
+    tensor-pipe instruction counts with sm80 IMMA kernel names, so the
+    Ampere binary-compat path engages real tensor cores. But ecosystems
+    that compile fresh per-arch (vLLM's CUTLASS W8A8) refuse SM120 because
+    the SM120-specific templates don't exist yet. Edge NPUs (NXP Neutron,
+    Kinara Ara, Hailo-8 class) have dedicated INT8 matmul engines with
+    vendor-provided kernel libraries and don't share this constraint.
+
+    **INT8 measured -3.8pp caveat:** the 5 regressed samples are all on two
+    refuse-to-answer prompts where both fp16 and INT8 correctly refused.
+    INT8's hedge used family-level chip names ("various NXP i.MX processors")
+    while fp16's hedge named specific SKUs ("NXP i.MX 8QuadMax"). Content
+    is equivalent; only the keyword-match grader sees a difference.
+
+    **Q4_K_M quality is from a different methodology** (Skippy's native RAG
+    path via llama-cpp) and isn't directly comparable to the fp16/FP8/INT8
+    shim-path measurements. Shown as context, not as a head-to-head delta.
+
+    **Measurement provenance:**
+    - fp16 + FP8: A6000 48GB pod, vLLM shim, v2+RAG (2026-04-23 FP8 runbook)
+    - INT8 W8A8: H100 80GB SXM pod, SmoothQuant+GPTQ 512 calib, same shim
+    - Q4_K_M: RTX 5090 local, Skippy's native RAG pipeline
+    """)
 
     st.markdown("---")
 
-with st.expander("Methodology — how this curve is built", expanded=False):
-    st.markdown(f"""
-**5 calibration anchors per model on RTX 5090** (from Skippy's measured
-bake-offs at `eval/run_sizer_bakeoffs.py`):
 
-| Model | Anchor points (prompt tokens → decode tok/s) |
-|---|---|
-""")
+    # ───────────────────────── Private silicon anchors ─────────────────────────
+    # Measured NPU + CNN values stored in Streamlit secrets (sensitive — never
+    # enter chat, git, or Drive). Schema: 9 LLM cells (3 tier-precision × 3
+    # models) + 6 CNN cells (2 tier-precision × 3 CNN variants). Loader returns
+    # None on missing/zero values → cell renders as "not measured" placeholder.
+    # Spec: personal-ai-framework docs/private_anchor_secrets_spec.md (65bf89c).
+    # Vendored 2026-05-14 per [docs] 13:24 + 13:31 bus messages.
+
+    with st.expander("📡 Measured silicon anchors (private)", expanded=False):
+        st.caption(
+            f"Direct measurements on real NPU silicon. Numbers live in "
+            f"Streamlit secrets (`sizer/npu_anchors.py` loads them) — this "
+            f"surface confirms they loaded. Bandwidth derivation uses your "
+            f"selected **NPU_share = {int(npu_share*100)}%** as the share "
+            f"override (change the NPU_share selector in the sidebar to "
+            f"re-derive). Cells reading 'not measured' have placeholder "
+            f"zeros in secrets — populate `.streamlit/secrets.toml` locally "
+            f"or in Streamlit Cloud Secrets to surface them."
+        )
+
+        # ── LLM throughput: 3 tier-precision rows × 3 models ──
+        st.markdown("**LLM throughput**")
+        _llm_tier_rows = [
+            ("NPU Mid INT8",       "mid",  "int8"),
+            ("NPU High INT8",      "high", "int8"),
+            ("NPU High FP",        "high", "fp"),
+        ]
+        _llm_model_cols = [
+            ("Qwen3 30B-A3B MoE",  "qwen3_30b_a3b_moe"),
+            ("Qwen 2.5 32B dense", "qwen25_32b_dense"),
+            ("Qwen 2.5 7B dense",  "qwen25_7b_dense"),
+        ]
+        for _tier_label, _tier_key, _prec_key in _llm_tier_rows:
+            st.markdown(f"*{_tier_label}*")
+            _cols = st.columns(3)
+            for _col, (_model_label, _model_key) in zip(_cols, _llm_model_cols):
+                _anchor = load_llm_anchor(_tier_key, _prec_key, _model_key)
+                with _col:
+                    if _anchor is None:
+                        st.metric(f"⏸ {_model_label}", "not measured")
+                    else:
+                        _bpt = _anchor.bytes_per_token(share_override=npu_share)
+                        st.metric(
+                            f"{_anchor.badge} {_model_label}",
+                            f"{_anchor.tokps:.1f} tok/s",
+                            delta=f"{_bpt/1e6:.0f} MB/tok @ {int(npu_share*100)}% BW share",
+                            delta_color="off",
+                        )
+
+        st.markdown("---")
+
+        # ── CNN latency: 2 tier-precision rows × 3 CNN variants ──
+        st.markdown("**CNN latency**")
+        _cnn_tier_rows = [
+            ("NPU Mid INT8",  "mid",  "int8"),
+            ("NPU High INT8", "high", "int8"),
+        ]
+        _cnn_model_cols = [
+            ("ResNet-50 W4",  "resnet50_w4",  "224×224"),
+            ("YOLOv8n W4",    "yolov8n_w4",   "640×640"),
+            ("YOLOv8n W8",    "yolov8n_w8",   "640×640"),
+        ]
+        for _tier_label, _tier_key, _prec_key in _cnn_tier_rows:
+            st.markdown(f"*{_tier_label}*")
+            _cols = st.columns(3)
+            for _col, (_cnn_label, _cnn_key, _res) in zip(_cols, _cnn_model_cols):
+                _anchor = load_cnn_anchor(_tier_key, _prec_key, _cnn_key)
+                with _col:
+                    if _anchor is None:
+                        st.metric(f"⏸ {_cnn_label}", "not measured")
+                    else:
+                        st.metric(
+                            f"{_anchor.badge} {_cnn_label}",
+                            f"{_anchor.ms_per_inference:.2f} ms",
+                            delta=f"{_anchor.fps:.1f} FPS · {_res}",
+                            delta_color="off",
+                        )
+
+        st.caption(
+            "Private silicon anchors. Numbers loaded from Streamlit secrets "
+            "via `sizer/npu_anchors.py`. Per spec: peak_bw × bw_share × "
+            "bw_efficiency derives achieved BW; the share override at "
+            "render-time lets the NPU_share selector re-derive without "
+            "re-reading secrets. **The headline decode-rate tile at the top "
+            "of the page uses these values directly** when the selected "
+            "(tier, model) cell has a measured anchor (see the source banner "
+            "for the cell's actual state). Cells without measurements fall "
+            "back to RTX 5090 BW-projection."
+        )
+
+with _tab_performance:
+    # Per-stage breakdown bar chart
+    stage_ms = {
+        "Host (retrieval + agent)": r["host_ms"],
+        "Prefill": r["prefill_s"] * 1000,
+        "Decode": r["decode_s"] * 1000,
+    }
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=list(stage_ms.keys()),
+        y=list(stage_ms.values()),
+        text=[f"{v:,.0f} ms" for v in stage_ms.values()],
+        textposition="outside",
+        marker_color=["#6b7280", "#3b82f6", "#10b981"],
+    ))
+    import math
+    _ymax = max(stage_ms.values())
+    fig.update_layout(
+        title=f"Per-stage time — {MODELS[model_key]['display_name']} / {tier_name}",
+        yaxis_title="Milliseconds (log)",
+        yaxis_type="log",
+        # Log-scale range: from 1ms to 1 decade above the tallest bar, so the
+        # "outside" text labels don't clip against the top edge.
+        yaxis=dict(gridcolor="#374151",
+                   range=[0, math.log10(max(_ymax, 10)) + 0.6]),
+        height=420,
+        margin=dict(t=60, b=40, l=40, r=20),
+        plot_bgcolor="#1f2937",
+        paper_bgcolor="#111827",
+        font=dict(color="#f3f4f6"),
+        xaxis=dict(showgrid=False),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
+    # ───────────────────────── Decode-vs-context curve ─────────────────────────
+    # Decode throughput is not a constant per model — it falls as context grows
+    # because per-step attention traffic scales with sequence length. This chart
+    # shows the interpolated curve across standard context lengths on the
+    # selected tier, with the measured 5090 anchor points called out.
+
+    st.subheader("Decode tok/s vs context length")
+    st.caption(
+        f"How decode throughput scales with prompt/context length on **{hw.name}**. "
+        f"Solid line = interpolated between measured 5090 calibration points "
+        f"(dots); dashed region = extrapolated beyond measured range "
+        f"(calibration ceiling = 12.7K tokens today). For non-5090 tiers, the "
+        f"whole curve is BW-scaled by {hw.effective_bandwidth_gbs / 1523.2:.3f}× "
+        f"(hw effective BW / 5090 effective BW). "
+        f"Compiler quality {compiler_quality:.2f} applies to projected tiers."
+    )
+
+    # Standard log-spaced context lengths to evaluate
+    _CTX_GRID = [100, 200, 400, 700, 1000, 2000, 4000, 7000, 10000, 13000,
+                 16000, 24000, 32000]
+
+    # Build curves for BOTH models on the selected tier (so users can compare
+    # MoE vs dense context-scaling on their silicon of interest)
+    _curve_fig = go.Figure()
+    _model_colors = {
+        "qwen2.5-14b-q4-dense": "#60a5fa",   # blue
+        "qwen3-30b-a3b-q4-moe": "#34d399",   # green
+    }
+
+    _max_measured_ctx_any = 0  # for the extrapolation shading
     for mk in MODELS.keys():
         try:
             anchors = calibration_anchors(mk)
         except Exception:
             continue
+        if not anchors:
+            continue
+
+        max_measured = max(a[0] for a in anchors)
+        _max_measured_ctx_any = max(_max_measured_ctx_any, max_measured)
+
+        # Curve line (solid within measured range, dashed beyond)
+        xs_in, ys_in = [], []
+        xs_out, ys_out = [], []
+        for ctx in _CTX_GRID:
+            r = decode_tok_s_at_context(mk, hw, ctx,
+                                         compiler_quality=compiler_quality,
+                                         npu_share=npu_share)
+            if ctx <= max_measured:
+                xs_in.append(ctx)
+                ys_in.append(r["decode_tok_s"])
+            else:
+                if not xs_out:  # start the dashed line at the last measured pt
+                    xs_out.append(max_measured)
+                    last_r = decode_tok_s_at_context(mk, hw, max_measured,
+                                                      compiler_quality=compiler_quality,
+                                                      npu_share=npu_share)
+                    ys_out.append(last_r["decode_tok_s"])
+                xs_out.append(ctx)
+                ys_out.append(r["decode_tok_s"])
+
+        color = _model_colors.get(mk, "#f59e0b")
         display = MODELS[mk]["display_name"]
-        pts = "  •  ".join(f"{pt:,} → {ts:.1f}" for pt, ts, _ in anchors)
-        st.markdown(f"| {display} | {pts} |")
-    st.markdown(f"""
-**Interpolation:** log-linear on the context axis between adjacent anchors.
-Context length matters more logarithmically than linearly — a 2x context
-increase from 4K→8K hurts decode more than 40K→80K, which is why the
-x-axis is log-scaled above.
 
-**Extrapolation:** clamped to the last anchor's tok/s value (so we don't
-overstate the collapse). Run bake-offs at 16K/24K/32K/64K prompt
-lengths to fill in the right side of the curve.
+        # In-range (solid)
+        _curve_fig.add_trace(go.Scatter(
+            x=xs_in, y=ys_in, mode="lines", name=display,
+            line=dict(color=color, width=2.5),
+            hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s<extra></extra>",
+        ))
+        # Extrapolated (dashed)
+        if xs_out:
+            _curve_fig.add_trace(go.Scatter(
+                x=xs_out, y=ys_out, mode="lines",
+                name=f"{display} (extrapolated)",
+                line=dict(color=color, width=2.0, dash="dash"),
+                showlegend=False,
+                hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s (extrapolated)<extra></extra>",
+            ))
 
-**BW scaling to other tiers:** decode is bandwidth-bound — tok/s on a
-projected tier = (5090 interpolated tok/s) × (tier effective BW /
-5090 effective BW) × compiler_quality. For the currently selected tier
-({hw.name}), that multiplier is {hw.effective_bandwidth_gbs / 1523.2:.3f}×.
+        # Measured anchor dots — scaled to the selected tier
+        ax_xs = [a[0] for a in anchors]
+        ax_ys = []
+        ax_labels = []
+        for pt, ts_5090, wl in anchors:
+            r = decode_tok_s_at_context(mk, hw, pt,
+                                         compiler_quality=compiler_quality,
+                                         npu_share=npu_share)
+            ax_ys.append(r["decode_tok_s"])
+            ax_labels.append(wl)
+        _curve_fig.add_trace(go.Scatter(
+            x=ax_xs, y=ax_ys, mode="markers",
+            name=f"{display} — measured anchors",
+            marker=dict(color=color, size=9,
+                        line=dict(color="#ffffff", width=1.5)),
+            hovertext=ax_labels, hoverinfo="text+x+y",
+            showlegend=False,
+        ))
 
-**What this improves vs the prior single-point model:** project_llm's
-BW projection formerly grabbed whichever workload's tok/s was labeled
-for the user's choice. With the curve, we interpolate to the actual
-prompt_tokens the user specified. For mid-range contexts (1K-10K) this
-is materially more accurate than clamping to the nearest workload anchor.
-""")
-
-st.markdown("---")
-
-
-# Cross-tier comparison table
-
-# ───────────────────────── KPI tables ─────────────────────────
-# Mirror of keyhole-sizer's KPI section. The cross-tier + cross-model
-# tables ARE the KPIs — per Kyle 2026-05-15 — so brand them as such
-# with a unified section header and a short orientation caption.
-st.header("📊 KPIs")
-st.caption(
-    "Two performance KPI views: (a) **this model across all NPU tiers** to size the silicon to a target deployment, and "
-    "(b) **all selectable models on this tier** to compare options within a fixed silicon budget. Download both as XLSX below."
-)
-
-st.subheader("Cross-tier comparison")
-st.caption(
-    f"All tiers projected from RTX 5090's measured baseline for "
-    f"**{MODELS[model_key]['display_name']}** at "
-    f"**{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
-    "Lower tier → more bandwidth-bound → slower decode. "
-    "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
-    "(uniform `bandwidth_efficiency` across tiers). "
-    "Src (Phase 2 projection-source classification): 🟢 measured "
-    "(direct silicon measurement — 5090 cell or tier-level Skippy "
-    "anchor) · 🟡 same-class projection (BW-scaled within tier_family "
-    "from a measured anchor; covers memory-upgrade overlays and "
-    "BW-equal sibling tiers) · 🟠 cross-class extrapolation (two-floor "
-    "MAX(BW, compute) physics — no anchor in tier_family yet) · 🔴 "
-    "won't fit / dtype mismatch · ⚠️ tight memory headroom suffix."
-)
-rows = []
-for stock_tname, stock_thw in TIERS.items():
-    # If the user has toggled an LPDDR6 memory upgrade, swap the
-    # upgraded variant in for THAT tier's row only — surfaces the
-    # upgraded BW / DDR type / decode tok/s and tags the Tier label
-    # with the variant suffix (e.g. "NPU Mid (LPDDR6-12)"). Other
-    # rows stay at their stock memory.
-    if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
-        tname, thw = hw.name, hw
-    else:
-        tname, thw = stock_tname, stock_thw
-
-    # DDR type + Total/Usable BW columns — pull straight from Hardware
-    # fields. Compact format to keep the table from widening:
-    # "128b LPDDR5X @ 8.4 GT/s" / "134.4 / 94.1"
-    ddr_type = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
-                f"{thw.mem_data_rate_gtps:g} GT/s")
-    bw_str = (f"{thw.mem_bandwidth_gbs:.1f} / "
-              f"{thw.effective_bandwidth_gbs:.1f}")
-
-    try:
-        rr = project_llm(
-            model_key, thw, workload_id,
-            prompt_tokens=prompt_tokens,
-            decode_tokens=decode_tokens,
-            compiler_quality=compiler_quality,
-            npu_share=npu_share,
+    # Extrapolation zone shading
+    if _max_measured_ctx_any > 0:
+        _curve_fig.add_vrect(
+            x0=_max_measured_ctx_any, x1=_CTX_GRID[-1],
+            fillcolor="#6b7280", opacity=0.10, line_width=0,
+            annotation_text="extrapolated — run bake-offs at longer contexts to fill",
+            annotation_position="top right",
+            annotation=dict(font=dict(size=11, color="#9ca3af")),
         )
-        if rr["source"] == "wont_fit":
-            f = rr["feasibility"]
-            rows.append({
-                "Tier": tname, "Src": "🔴",
-                "DDR type": ddr_type, "Total/Usable BW": bw_str,
-                "Decode": "—", "Prefill": "—", "Total (s)": "—",
-                "Host": f"won't fit · needs {f['required_gb']} GB "
-                        f"(has {f['available_gb']})",
-            })
-            continue
-        if rr["source"] == "dtype_mismatch":
-            d = rr["dtype_detail"]
-            rows.append({
-                "Tier": tname, "Src": "🔴",
-                "DDR type": ddr_type, "Total/Usable BW": bw_str,
-                "Decode": "—", "Prefill": "—", "Total (s)": "—",
-                "Host": (f"dtype · needs {d['model_needs']} "
-                         f"(has {'/'.join(d['hw_supports'])})"),
-            })
-            continue
-        # Pick Src icon by Phase 2 source classification:
-        # 🟢 measured (direct cell or anchored on this tier)
-        # 🟡 same_class_anchor (BW-scaled within family — memory-upgrade
-        #    overlays and BW-equal sibling tiers both land here)
-        # 🟠 cross_class (two-floor MAX physics, no anchor in family)
-        # ⚠️ suffix for tight memory headroom.
-        _src_icon_by_class = {
-            "measured": "🟢",
-            "measured_anchor": "🟢",
-            "same_class_anchor": "🟡",
-            "cross_class": "🟠",
-        }
-        src_icon = _src_icon_by_class.get(rr["source"], "⚪")
-        if rr["feasibility"]["verdict"] == "tight":
-            src_icon = src_icon + "⚠️"
-        rows.append({
-            "Tier": tname, "Src": src_icon,
-            "DDR type": ddr_type, "Total/Usable BW": bw_str,
-            # Stringify all numeric values: the wont_fit / dtype_mismatch
-            # branches above use "—" sentinels which collide with floats
-            # under pandas object-dtype + pyarrow serialization (Streamlit
-            # 1.56's st.dataframe → pa.Table.from_pandas raises
-            # ArrowTypeError 'Expected bytes, got a float object').
-            "Decode":   f"{rr['decode_tok_s']:.1f}",
-            "Prefill":  f"{round(rr['prefill_tok_s'])}",
-            "Total (s)": f"{rr['total_s']:.2f}",
-            "Host":     (f"{rr['host_ms']:.0f}"
-                         if isinstance(rr['host_ms'], (int, float))
-                         else str(rr['host_ms'])),
-        })
-    except ValueError:
-        # Pad missing columns with "—" so pandas doesn't fill them with
-        # NaN (float) — same mixed-type-collision risk.
-        rows.append({
-            "Tier": tname, "Src": "⚪",
-            "DDR type": ddr_type, "Total/Usable BW": bw_str,
-            "Decode": "—", "Prefill": "—",
-            "Total (s)": "—", "Host": "—",
-        })
-df = pd.DataFrame(rows)
-st.dataframe(df, width="stretch", hide_index=True)
 
-
-# Cross-model comparison on this tier
-st.subheader("Cross-model comparison (on this tier)")
-st.caption("MoE's decode advantage comes from fewer active params per token — "
-           "dense 14B moves ~4.5× more weight bytes per decoded token than MoE 30B-A3B.")
-rows2 = []
-for mk in MODELS:
-    try:
-        rr = project_llm(
-            mk, hw, workload_id,
-            prompt_tokens=prompt_tokens,
-            decode_tokens=decode_tokens,
-            compiler_quality=compiler_quality,
-            npu_share=npu_share,
-        )
-        if rr["source"] == "wont_fit":
-            rows2.append({
-                "Model": MODELS[mk]["display_name"],
-                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-                "Decode tok/s": "—",
-                "Total (s)": "—",
-                "Source": "🔴 won't fit",
-            })
-            continue
-        if rr["source"] == "dtype_mismatch":
-            rows2.append({
-                "Model": MODELS[mk]["display_name"],
-                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-                "Decode tok/s": "—",
-                "Total (s)": "—",
-                "Source": "🔴 dtype mismatch",
-            })
-            continue
-        # Phase 2 4-state source classification (same scheme as cross-tier
-        # table): 🟢 measured/measured_anchor, 🟡 same_class_anchor,
-        # 🟠 cross_class, ⚠️ tight memory headroom suffix.
-        _src_label_by_class = {
-            "measured":          "🟢 measured",
-            "measured_anchor":   "🟢 measured anchor",
-            "same_class_anchor": "🟡 same-class",
-            "cross_class":       "🟠 cross-class",
-        }
-        _src_label = _src_label_by_class.get(rr["source"], "⚪ unknown")
-        if rr["feasibility"]["verdict"] == "tight":
-            _src_label = _src_label + " ⚠️"
-        rows2.append({
-            "Model": MODELS[mk]["display_name"],
-            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            # Stringify numerics (same rationale as the cross-tier table
-            # above — pyarrow can't serialize a column that mixes "—"
-            # sentinels with floats under pandas object dtype).
-            "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
-            "Total (s)":    f"{rr['total_s']:.2f}",
-            "Source":       _src_label,
-        })
-    except ValueError:
-        # Same column-padding pattern — avoid NaN-vs-string mixing.
-        # Active params + Bytes/token decode are uniformly floats in
-        # the other branches (model metadata, not result-dependent),
-        # so keep them as floats here too.
-        rows2.append({
-            "Model": MODELS[mk]["display_name"],
-            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            "Decode tok/s": "—",
-            "Total (s)": "—",
-            "Source": "⚪ no data",
-        })
-df2 = pd.DataFrame(rows2)
-st.dataframe(df2, width="stretch", hide_index=True)
-
-
-# XLSX download
-st.markdown("---")
-buf = io.BytesIO()
-with pd.ExcelWriter(buf, engine="openpyxl") as xlw:
-    df.to_excel(xlw, sheet_name="cross_tier", index=False)
-    df2.to_excel(xlw, sheet_name="cross_model", index=False)
-st.download_button(
-    "⬇ Download projections (XLSX)",
-    data=buf.getvalue(),
-    file_name=f"skippy_sizer_{model_key}_{tier_name.replace(' ','_')}_{workload_id}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
-
-
-st.markdown("---")
-
-
-# ───────────────────────── Retargeting cost ─────────────────────────
-# The lifecycle cost of deploying a model to a tier that can't run the
-# model's native precision. This is per-iteration — every time the model
-# retrains, this cost fires again.
-
-st.subheader("Retargeting cost per model revision")
-st.caption(
-    f"Lifecycle cost of shipping Skippy's current Q4_K_M fp16-compute model to "
-    f"**{hw.name}** on each retrain. The \"area savings from "
-    f"INT8-only\" argument is a one-time BOM win; this is the forever-cost "
-    f"at the org level — paid every time the model is retrained, per "
-    f"customer, per fine-tune."
-)
-
-# Deployment model selector — drives default cadence + rigor since a
-# cloud-service product and a local-learning product have fundamentally
-# different regression-testing cost curves. User can override the
-# defaults inside the annualized-cost expander below.
-_deployment_key = st.selectbox(
-    "Deployment model",
-    options=list(DEPLOYMENT_MODELS.keys()),
-    format_func=lambda k: DEPLOYMENT_MODELS[k].display_name,
-    index=0,
-    key="k_deployment",
-    help="How does this product get to users? Cloud-service products "
-         "retrain frequently (the Gate A+B tax compounds quickly). "
-         "Local-learning products retrain centrally on a slow cadence "
-         "but add new QA burdens around per-device validation, "
-         "adaptation drift, and staged rollouts.",
-)
-_deployment = DEPLOYMENT_MODELS[_deployment_key]
-
-with st.container():
-    st.info(f"**{_deployment.display_name}** — {_deployment.description} "
-            f"*Default: {_deployment.default_cadence} retrain × "
-            f"{_deployment.default_rigor.replace('_', '-')} rigor. "
-            f"Override below if your team operates differently.*")
-
-# Figure out which retargeting path this tier needs for Skippy's current model
-_skippy_model_dtype = MODELS[model_key].get("compute_dtype", "fp16")
-_path_key = deployment_path_for_tier(hw.tier_lookup_name, _skippy_model_dtype)
-_cost = RETARGETING_COSTS[_path_key]
-_cost_color = retargeting_cost_color(_path_key)
-
-_rc_col_a, _rc_col_b, _rc_col_c, _rc_col_d = st.columns(4)
-with _rc_col_a:
-    st.markdown(
-        f"<div style='padding: 10px; border-radius: 6px; background:#1f2937; "
-        f"border-left: 4px solid {_cost_color};'>"
-        f"<div style='font-size: 0.8rem; color: #9ca3af;'>Deployment path</div>"
-        f"<div style='font-size: 1.05rem; color: {_cost_color}; font-weight: 600;'>"
-        f"{_cost.path}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
+    _curve_fig.update_layout(
+        title=f"Decode throughput vs context length on {hw.name}",
+        xaxis=dict(title="Context length (tokens)", type="log",
+                   gridcolor="#374151"),
+        yaxis=dict(title="Decode tok/s", gridcolor="#374151",
+                   rangemode="tozero"),
+        height=420,
+        margin=dict(t=60, b=40, l=50, r=20),
+        plot_bgcolor="#1f2937",
+        paper_bgcolor="#111827",
+        font=dict(color="#f3f4f6"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
     )
-_rc_col_b.metric("Wall time per cycle", f"{_cost.wall_minutes} min")
-_rc_col_c.metric("Compute cost per cycle", f"${_cost.dollars_per_cycle:.2f}")
-_rc_col_d.metric("Engineer hours per cycle", f"{_cost.engineer_hours:.1f} hrs")
+    st.plotly_chart(_curve_fig, width="stretch")
 
-# Annualized what-if: user picks retrain cadence + regression-testing
-# rigor, we project annualized overhead with Gate A / Gate B split.
-with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor",
-                 expanded=False):
-    _cadence_options = ["daily", "weekly", "monthly", "quarterly", "annually"]
-    _rigor_options = list(REGRESSION_RIGOR.keys())
-    _cad_col, _rig_col = st.columns(2)
-    with _cad_col:
-        # Widget key namespaced by deployment so changing deployment model
-        # resets the selection to that model's default.
-        _retrain_freq = st.selectbox(
-            "How often does Skippy retrain?",
-            options=_cadence_options,
-            index=_cadence_options.index(_deployment.default_cadence),
-            key=f"k_retrain_freq_{_deployment_key}",
-            help="Retrain cadence. Cloud-service products typically run "
-                 "daily or weekly; local-learning products quarterly or "
-                 "semi-annual (OTA updates are expensive and can't "
-                 "hot-patch deployed devices).",
+    # ─── What-if model projection card ───
+    # Populated from the sidebar expander. Shown only when the user enables
+    # it so we don't clutter the default view.
+    if st.session_state.get("k_whatif_enable"):
+        st.markdown("---")
+        st.subheader(f"What-if: **{_whatif_name}** on {hw.name}")
+
+        _whatif_active_params = int(_whatif_active_b * 1e9)
+        _whatif_total_params = int(_whatif_total_b * 1e9)
+
+        # Project decode tok/s at the current workload's context length
+        _wi = project_what_if_decode_tok_s(
+            active_params=_whatif_active_params,
+            bytes_per_param=_whatif_bpp,
+            is_moe=_whatif_is_moe,
+            hw=hw,
+            ctx_tokens=prompt_tokens,
+            compiler_quality=compiler_quality,
+            npu_share=npu_share,
         )
-    with _rig_col:
-        _rigor_key = st.selectbox(
-            "Regression testing rigor",
-            options=_rigor_options,
-            format_func=lambda k: REGRESSION_RIGOR[k].display_name,
-            index=_rigor_options.index(_deployment.default_rigor),
-            key=f"k_rigor_{_deployment_key}",
-            help="How thorough is the regression suite? Smoke approximates "
-                 "today's 44-prompt harness — research-grade only. Nightly "
-                 "is the floor for serious production. Pre-release adds "
-                 "human red-team and domain-expert review (required for "
-                 "local-learning products where OTA rollback is costly).",
+        # Memory feasibility at prompt+decode total context
+        _wm = what_if_memory_feasibility(
+            total_params=_whatif_total_params,
+            bytes_per_param=_whatif_bpp,
+            hw=hw,
+            context_tokens=prompt_tokens + decode_tokens,
+            hidden_dim=int(_whatif_hidden),
+            num_layers=int(_whatif_layers),
         )
-    cycles_per_year = {
-        "daily": 365, "weekly": 52, "monthly": 12,
-        "quarterly": 4, "annually": 1,
-    }[_retrain_freq]
-    _rigor = REGRESSION_RIGOR[_rigor_key]
 
-    # Compute Gate A / Gate B breakdown for this (path, rigor, cadence)
-    _testing = annualized_testing_cost(_path_key, _rigor_key, cycles_per_year)
-    _gates = gates_per_cycle(_path_key)
+        _wc_a, _wc_b, _wc_c, _wc_d = st.columns(4)
+        _wc_a.metric("Decode tok/s", f"{_wi['decode_tok_s']:.1f}",
+                     delta=f"{_wi['speedup_vs_current_skippy']:.2f}× vs current Skippy")
+        _wc_b.metric("Bytes/token decode",
+                     f"{_wi['bytes_per_token']/1e9:.2f} GB",
+                     delta=f"{_wi['anchor_bytes_per_token']/_wi['bytes_per_token']:.2f}× vs {_wi['anchor_display_name'].split(' ')[0]} anchor",
+                     delta_color="normal")
+        _wc_c.metric("VRAM required",
+                     f"{_wm['required_gb']:.1f} GB",
+                     delta=f"{_wm['headroom_gb']:+.1f} GB headroom",
+                     delta_color="normal")
+        _wc_d.metric("Feasibility", _wm['verdict'].replace("_", " "))
 
-    # Alt-path (counterfactual) for the comparison story
-    _alt_path_key = "ptq" if _path_key == "fp_native" else "fp_native"
-    _alt_testing = annualized_testing_cost(_alt_path_key, _rigor_key,
-                                           cycles_per_year)
+        # Fit/tight/won't-fit banner
+        if _wm['verdict'] == "wont_fit":
+            st.error(
+                f"🔴 **Won't fit** on {hw.name} at {prompt_tokens + decode_tokens:,} "
+                f"token context. Weights = {_wm['breakdown']['weights_gb']} GB + "
+                f"KV = {_wm['breakdown']['kv_cache_gb']} GB + "
+                f"overhead = {_wm['breakdown']['overhead_gb']} GB = "
+                f"{_wm['required_gb']} GB, only {_wm['available_gb']} GB available. "
+                f"Drop context length, use a smaller quant, or move up a tier."
+            )
+        elif _wm['verdict'] == "tight":
+            st.warning(
+                f"🟡 **Tight fit** — {_wm['headroom_gb']} GB headroom (<15% of "
+                f"{_wm['available_gb']} GB). Any runtime overhead growth risks OOM."
+            )
+        else:
+            st.success(
+                f"🟢 **Fits comfortably** — {_wm['headroom_gb']} GB headroom on "
+                f"{hw.name} at {prompt_tokens + decode_tokens:,} token context."
+            )
 
-    # Counterfactual cost shock FIRST — what the choice WOULD cost on the
-    # other precision-path at this rigor tier
-    if _path_key == "fp_native":
+        # Honest summary of the projection
+        _speedup_vs_skippy = _wi['speedup_vs_current_skippy']
+        if _speedup_vs_skippy > 1.2:
+            _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                        f"faster decode** than current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                        f"→ {_wi['decode_tok_s']:.1f} tok/s) at this context. "
+                        f"Worth bake-offing to verify projected quality.")
+        elif _speedup_vs_skippy < 0.8:
+            _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                        f"the decode** of current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                        f"→ {_wi['decode_tok_s']:.1f} tok/s). Quality advantage "
+                        f"would need to justify the slowdown.")
+        else:
+            _verdict = (f"**{_whatif_name}** projects **similar decode** to "
+                        f"current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                        f"→ {_wi['decode_tok_s']:.1f} tok/s, "
+                        f"{_speedup_vs_skippy:.2f}×). Net change depends on "
+                        f"quality delta, not speed.")
+        st.info(_verdict)
+
+        with st.expander("How this projection is computed", expanded=False):
+            st.markdown(f"""
+    **Anchor model:** {_wi['anchor_display_name']} (architecture-class match)
+
+    **Decode scaling law:** decode tok/s is roughly inversely proportional
+    to active bytes per decoded token when BW-bound.
+
+    - Anchor active bytes/token: {_wi['anchor_bytes_per_token']/1e9:.2f} GB
+      ({MODELS[_wi['anchor_model']]['active_params']/1e9:.1f}B active × {MODELS[_wi['anchor_model']]['bytes_per_param']:.2f} bytes/param)
+    - What-if active bytes/token: {_wi['bytes_per_token']/1e9:.2f} GB
+      ({_whatif_active_b:.1f}B active × {_whatif_bpp:.2f} bytes/param)
+    - Scaling factor: {_wi['speedup_vs_anchor']:.2f}× (anchor bytes / what-if bytes)
+
+    **Projection math:** anchor decode tok/s at {prompt_tokens:,} context
+    (interpolated from the 5 measured anchors) × scaling factor = what-if
+    projection. This bakes in the same architecture-specific efficiency
+    factors (MoE routing overhead, small-matmul inefficiency) the anchor
+    model exhibits, so we don't need a separate efficiency constant.
+
+    **What this misses:**
+    - Per-layer attention shape differences (KV head ratio, head count)
+    - Instruction-following / RAG-grounding quality — which is often the
+      actual reason to swap models. Quality requires a real eval run.
+    - Runtime-specific optimizations (some models are better-supported in
+      llama-cpp / vLLM than others — real perf can differ from BW-bound
+      projection by ±20%)
+
+    **How to validate this projection:** download the candidate model's
+    Q4_K_M GGUF, run `eval/run_sizer_bakeoffs.py` against a Skippy instance
+    serving it, regenerate `sizer_bundle.json`. The new anchors slot
+    directly into the calibration curve.
+    """)
+
+        st.markdown("---")
+
+    with st.expander("Methodology — how this curve is built", expanded=False):
+        st.markdown(f"""
+    **5 calibration anchors per model on RTX 5090** (from Skippy's measured
+    bake-offs at `eval/run_sizer_bakeoffs.py`):
+
+    | Model | Anchor points (prompt tokens → decode tok/s) |
+    |---|---|
+    """)
+        for mk in MODELS.keys():
+            try:
+                anchors = calibration_anchors(mk)
+            except Exception:
+                continue
+            display = MODELS[mk]["display_name"]
+            pts = "  •  ".join(f"{pt:,} → {ts:.1f}" for pt, ts, _ in anchors)
+            st.markdown(f"| {display} | {pts} |")
+        st.markdown(f"""
+    **Interpolation:** log-linear on the context axis between adjacent anchors.
+    Context length matters more logarithmically than linearly — a 2x context
+    increase from 4K→8K hurts decode more than 40K→80K, which is why the
+    x-axis is log-scaled above.
+
+    **Extrapolation:** clamped to the last anchor's tok/s value (so we don't
+    overstate the collapse). Run bake-offs at 16K/24K/32K/64K prompt
+    lengths to fill in the right side of the curve.
+
+    **BW scaling to other tiers:** decode is bandwidth-bound — tok/s on a
+    projected tier = (5090 interpolated tok/s) × (tier effective BW /
+    5090 effective BW) × compiler_quality. For the currently selected tier
+    ({hw.name}), that multiplier is {hw.effective_bandwidth_gbs / 1523.2:.3f}×.
+
+    **What this improves vs the prior single-point model:** project_llm's
+    BW projection formerly grabbed whichever workload's tok/s was labeled
+    for the user's choice. With the curve, we interpolate to the actual
+    prompt_tokens the user specified. For mid-range contexts (1K-10K) this
+    is materially more accurate than clamping to the nearest workload anchor.
+    """)
+
+    st.markdown("---")
+
+with _tab_kpis:
+    # ───────────────────────── KPI tables ─────────────────────────
+    # Mirror of keyhole-sizer's KPI section. The cross-tier + cross-model
+    # tables ARE the KPIs — per Kyle 2026-05-15 — so brand them as such
+    # with a unified section header and a short orientation caption.
+    st.header("📊 KPIs")
+    st.caption(
+        "Two performance KPI views: (a) **this model across all NPU tiers** to size the silicon to a target deployment, and "
+        "(b) **all selectable models on this tier** to compare options within a fixed silicon budget. Download both as XLSX below."
+    )
+
+    st.subheader("Cross-tier comparison")
+    st.caption(
+        f"All tiers projected from RTX 5090's measured baseline for "
+        f"**{MODELS[model_key]['display_name']}** at "
+        f"**{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
+        "Lower tier → more bandwidth-bound → slower decode. "
+        "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
+        "(uniform `bandwidth_efficiency` across tiers). "
+        "Src (Phase 2 projection-source classification): 🟢 measured "
+        "(direct silicon measurement — 5090 cell or tier-level Skippy "
+        "anchor) · 🟡 same-class projection (BW-scaled within tier_family "
+        "from a measured anchor; covers memory-upgrade overlays and "
+        "BW-equal sibling tiers) · 🟠 cross-class extrapolation (two-floor "
+        "MAX(BW, compute) physics — no anchor in tier_family yet) · 🔴 "
+        "won't fit / dtype mismatch · ⚠️ tight memory headroom suffix."
+    )
+    rows = []
+    for stock_tname, stock_thw in TIERS.items():
+        # If the user has toggled an LPDDR6 memory upgrade, swap the
+        # upgraded variant in for THAT tier's row only — surfaces the
+        # upgraded BW / DDR type / decode tok/s and tags the Tier label
+        # with the variant suffix (e.g. "NPU Mid (LPDDR6-12)"). Other
+        # rows stay at their stock memory.
+        if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
+            tname, thw = hw.name, hw
+        else:
+            tname, thw = stock_tname, stock_thw
+
+        # DDR type + Total/Usable BW columns — pull straight from Hardware
+        # fields. Compact format to keep the table from widening:
+        # "128b LPDDR5X @ 8.4 GT/s" / "134.4 / 94.1"
+        ddr_type = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
+                    f"{thw.mem_data_rate_gtps:g} GT/s")
+        bw_str = (f"{thw.mem_bandwidth_gbs:.1f} / "
+                  f"{thw.effective_bandwidth_gbs:.1f}")
+
+        try:
+            rr = project_llm(
+                model_key, thw, workload_id,
+                prompt_tokens=prompt_tokens,
+                decode_tokens=decode_tokens,
+                compiler_quality=compiler_quality,
+                npu_share=npu_share,
+            )
+            if rr["source"] == "wont_fit":
+                f = rr["feasibility"]
+                rows.append({
+                    "Tier": tname, "Src": "🔴",
+                    "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                    "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                    "Host": f"won't fit · needs {f['required_gb']} GB "
+                            f"(has {f['available_gb']})",
+                })
+                continue
+            if rr["source"] == "dtype_mismatch":
+                d = rr["dtype_detail"]
+                rows.append({
+                    "Tier": tname, "Src": "🔴",
+                    "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                    "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                    "Host": (f"dtype · needs {d['model_needs']} "
+                             f"(has {'/'.join(d['hw_supports'])})"),
+                })
+                continue
+            # Pick Src icon by Phase 2 source classification:
+            # 🟢 measured (direct cell or anchored on this tier)
+            # 🟡 same_class_anchor (BW-scaled within family — memory-upgrade
+            #    overlays and BW-equal sibling tiers both land here)
+            # 🟠 cross_class (two-floor MAX physics, no anchor in family)
+            # ⚠️ suffix for tight memory headroom.
+            _src_icon_by_class = {
+                "measured": "🟢",
+                "measured_anchor": "🟢",
+                "same_class_anchor": "🟡",
+                "cross_class": "🟠",
+            }
+            src_icon = _src_icon_by_class.get(rr["source"], "⚪")
+            if rr["feasibility"]["verdict"] == "tight":
+                src_icon = src_icon + "⚠️"
+            rows.append({
+                "Tier": tname, "Src": src_icon,
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                # Stringify all numeric values: the wont_fit / dtype_mismatch
+                # branches above use "—" sentinels which collide with floats
+                # under pandas object-dtype + pyarrow serialization (Streamlit
+                # 1.56's st.dataframe → pa.Table.from_pandas raises
+                # ArrowTypeError 'Expected bytes, got a float object').
+                "Decode":   f"{rr['decode_tok_s']:.1f}",
+                "Prefill":  f"{round(rr['prefill_tok_s'])}",
+                "Total (s)": f"{rr['total_s']:.2f}",
+                "Host":     (f"{rr['host_ms']:.0f}"
+                             if isinstance(rr['host_ms'], (int, float))
+                             else str(rr['host_ms'])),
+            })
+        except ValueError:
+            # Pad missing columns with "—" so pandas doesn't fill them with
+            # NaN (float) — same mixed-type-collision risk.
+            rows.append({
+                "Tier": tname, "Src": "⚪",
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                "Decode": "—", "Prefill": "—",
+                "Total (s)": "—", "Host": "—",
+            })
+    df = pd.DataFrame(rows)
+    st.dataframe(df, width="stretch", hide_index=True)
+
+
+    # Cross-model comparison on this tier
+    st.subheader("Cross-model comparison (on this tier)")
+    st.caption("MoE's decode advantage comes from fewer active params per token — "
+               "dense 14B moves ~4.5× more weight bytes per decoded token than MoE 30B-A3B.")
+    rows2 = []
+    for mk in MODELS:
+        try:
+            rr = project_llm(
+                mk, hw, workload_id,
+                prompt_tokens=prompt_tokens,
+                decode_tokens=decode_tokens,
+                compiler_quality=compiler_quality,
+                npu_share=npu_share,
+            )
+            if rr["source"] == "wont_fit":
+                rows2.append({
+                    "Model": MODELS[mk]["display_name"],
+                    "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                    "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                    "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                    "Decode tok/s": "—",
+                    "Total (s)": "—",
+                    "Source": "🔴 won't fit",
+                })
+                continue
+            if rr["source"] == "dtype_mismatch":
+                rows2.append({
+                    "Model": MODELS[mk]["display_name"],
+                    "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                    "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                    "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                    "Decode tok/s": "—",
+                    "Total (s)": "—",
+                    "Source": "🔴 dtype mismatch",
+                })
+                continue
+            # Phase 2 4-state source classification (same scheme as cross-tier
+            # table): 🟢 measured/measured_anchor, 🟡 same_class_anchor,
+            # 🟠 cross_class, ⚠️ tight memory headroom suffix.
+            _src_label_by_class = {
+                "measured":          "🟢 measured",
+                "measured_anchor":   "🟢 measured anchor",
+                "same_class_anchor": "🟡 same-class",
+                "cross_class":       "🟠 cross-class",
+            }
+            _src_label = _src_label_by_class.get(rr["source"], "⚪ unknown")
+            if rr["feasibility"]["verdict"] == "tight":
+                _src_label = _src_label + " ⚠️"
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                # Stringify numerics (same rationale as the cross-tier table
+                # above — pyarrow can't serialize a column that mixes "—"
+                # sentinels with floats under pandas object dtype).
+                "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
+                "Total (s)":    f"{rr['total_s']:.2f}",
+                "Source":       _src_label,
+            })
+        except ValueError:
+            # Same column-padding pattern — avoid NaN-vs-string mixing.
+            # Active params + Bytes/token decode are uniformly floats in
+            # the other branches (model metadata, not result-dependent),
+            # so keep them as floats here too.
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                "Decode tok/s": "—",
+                "Total (s)": "—",
+                "Source": "⚪ no data",
+            })
+    df2 = pd.DataFrame(rows2)
+    st.dataframe(df2, width="stretch", hide_index=True)
+
+
+    # XLSX download
+    st.markdown("---")
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xlw:
+        df.to_excel(xlw, sheet_name="cross_tier", index=False)
+        df2.to_excel(xlw, sheet_name="cross_model", index=False)
+    st.download_button(
+        "⬇ Download projections (XLSX)",
+        data=buf.getvalue(),
+        file_name=f"skippy_sizer_{model_key}_{tier_name.replace(' ','_')}_{workload_id}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+with _tab_cost:
+    # ───────────────────────── Retargeting cost ─────────────────────────
+    # The lifecycle cost of deploying a model to a tier that can't run the
+    # model's native precision. This is per-iteration — every time the model
+    # retrains, this cost fires again.
+
+    st.subheader("Retargeting cost per model revision")
+    st.caption(
+        f"Lifecycle cost of shipping Skippy's current Q4_K_M fp16-compute model to "
+        f"**{hw.name}** on each retrain. The \"area savings from "
+        f"INT8-only\" argument is a one-time BOM win; this is the forever-cost "
+        f"at the org level — paid every time the model is retrained, per "
+        f"customer, per fine-tune."
+    )
+
+    # Deployment model selector — drives default cadence + rigor since a
+    # cloud-service product and a local-learning product have fundamentally
+    # different regression-testing cost curves. User can override the
+    # defaults inside the annualized-cost expander below.
+    _deployment_key = st.selectbox(
+        "Deployment model",
+        options=list(DEPLOYMENT_MODELS.keys()),
+        format_func=lambda k: DEPLOYMENT_MODELS[k].display_name,
+        index=0,
+        key="k_deployment",
+        help="How does this product get to users? Cloud-service products "
+             "retrain frequently (the Gate A+B tax compounds quickly). "
+             "Local-learning products retrain centrally on a slow cadence "
+             "but add new QA burdens around per-device validation, "
+             "adaptation drift, and staged rollouts.",
+    )
+    _deployment = DEPLOYMENT_MODELS[_deployment_key]
+
+    with st.container():
+        st.info(f"**{_deployment.display_name}** — {_deployment.description} "
+                f"*Default: {_deployment.default_cadence} retrain × "
+                f"{_deployment.default_rigor.replace('_', '-')} rigor. "
+                f"Override below if your team operates differently.*")
+
+    # Figure out which retargeting path this tier needs for Skippy's current model
+    _skippy_model_dtype = MODELS[model_key].get("compute_dtype", "fp16")
+    _path_key = deployment_path_for_tier(hw.tier_lookup_name, _skippy_model_dtype)
+    _cost = RETARGETING_COSTS[_path_key]
+    _cost_color = retargeting_cost_color(_path_key)
+
+    _rc_col_a, _rc_col_b, _rc_col_c, _rc_col_d = st.columns(4)
+    with _rc_col_a:
         st.markdown(
-            f"**If this were an INT8-only tier** (LP4 / LP5-32bit / LP5-64bit) "
-            f"and you had to run both Gate A (training-validation) AND Gate B "
-            f"(quant-validation) at **{_rigor.display_name.split(' (')[0]}** "
-            f"rigor, **{_retrain_freq}** cadence ({cycles_per_year} cycles/yr):"
+            f"<div style='padding: 10px; border-radius: 6px; background:#1f2937; "
+            f"border-left: 4px solid {_cost_color};'>"
+            f"<div style='font-size: 0.8rem; color: #9ca3af;'>Deployment path</div>"
+            f"<div style='font-size: 1.05rem; color: {_cost_color}; font-weight: 600;'>"
+            f"{_cost.path}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
         )
-        _cmp_a, _cmp_b, _cmp_c = st.columns(3)
-        _cmp_a.metric("Annual engineer time",
-                      f"{_alt_testing['total_engineer_hours']:.0f} hrs")
-        _cmp_b.metric("Annual compute cost",
-                      f"${_alt_testing['total_dollars']:,.0f}")
-        _cmp_c.metric("Annual wall time on pod",
-                      f"{_alt_testing['total_wall_hours']:.0f} hrs")
+    _rc_col_b.metric("Wall time per cycle", f"{_cost.wall_minutes} min")
+    _rc_col_c.metric("Compute cost per cycle", f"${_cost.dollars_per_cycle:.2f}")
+    _rc_col_d.metric("Engineer hours per cycle", f"{_cost.engineer_hours:.1f} hrs")
+
+    # Annualized what-if: user picks retrain cadence + regression-testing
+    # rigor, we project annualized overhead with Gate A / Gate B split.
+    with st.expander("Annualized lifecycle cost — retrain cadence + testing rigor",
+                     expanded=False):
+        _cadence_options = ["daily", "weekly", "monthly", "quarterly", "annually"]
+        _rigor_options = list(REGRESSION_RIGOR.keys())
+        _cad_col, _rig_col = st.columns(2)
+        with _cad_col:
+            # Widget key namespaced by deployment so changing deployment model
+            # resets the selection to that model's default.
+            _retrain_freq = st.selectbox(
+                "How often does Skippy retrain?",
+                options=_cadence_options,
+                index=_cadence_options.index(_deployment.default_cadence),
+                key=f"k_retrain_freq_{_deployment_key}",
+                help="Retrain cadence. Cloud-service products typically run "
+                     "daily or weekly; local-learning products quarterly or "
+                     "semi-annual (OTA updates are expensive and can't "
+                     "hot-patch deployed devices).",
+            )
+        with _rig_col:
+            _rigor_key = st.selectbox(
+                "Regression testing rigor",
+                options=_rigor_options,
+                format_func=lambda k: REGRESSION_RIGOR[k].display_name,
+                index=_rigor_options.index(_deployment.default_rigor),
+                key=f"k_rigor_{_deployment_key}",
+                help="How thorough is the regression suite? Smoke approximates "
+                     "today's 44-prompt harness — research-grade only. Nightly "
+                     "is the floor for serious production. Pre-release adds "
+                     "human red-team and domain-expert review (required for "
+                     "local-learning products where OTA rollback is costly).",
+            )
+        cycles_per_year = {
+            "daily": 365, "weekly": 52, "monthly": 12,
+            "quarterly": 4, "annually": 1,
+        }[_retrain_freq]
+        _rigor = REGRESSION_RIGOR[_rigor_key]
+
+        # Compute Gate A / Gate B breakdown for this (path, rigor, cadence)
+        _testing = annualized_testing_cost(_path_key, _rigor_key, cycles_per_year)
+        _gates = gates_per_cycle(_path_key)
+
+        # Alt-path (counterfactual) for the comparison story
+        _alt_path_key = "ptq" if _path_key == "fp_native" else "fp_native"
+        _alt_testing = annualized_testing_cost(_alt_path_key, _rigor_key,
+                                               cycles_per_year)
+
+        # Counterfactual cost shock FIRST — what the choice WOULD cost on the
+        # other precision-path at this rigor tier
+        if _path_key == "fp_native":
+            st.markdown(
+                f"**If this were an INT8-only tier** (LP4 / LP5-32bit / LP5-64bit) "
+                f"and you had to run both Gate A (training-validation) AND Gate B "
+                f"(quant-validation) at **{_rigor.display_name.split(' (')[0]}** "
+                f"rigor, **{_retrain_freq}** cadence ({cycles_per_year} cycles/yr):"
+            )
+            _cmp_a, _cmp_b, _cmp_c = st.columns(3)
+            _cmp_a.metric("Annual engineer time",
+                          f"{_alt_testing['total_engineer_hours']:.0f} hrs")
+            _cmp_b.metric("Annual compute cost",
+                          f"${_alt_testing['total_dollars']:,.0f}")
+            _cmp_c.metric("Annual wall time on pod",
+                          f"{_alt_testing['total_wall_hours']:.0f} hrs")
+            st.caption(
+                f"Breakdown: Gate A = {_alt_testing['gate_a']['invocations']} "
+                f"invocations @ ${_rigor.dollars_per_gate:.0f}/gate = "
+                f"${_alt_testing['gate_a']['dollars']:,.0f}. "
+                f"Gate B = {_alt_testing['gate_b']['invocations']} invocations @ "
+                f"${_rigor.dollars_per_gate:.0f}/gate = "
+                f"${_alt_testing['gate_b']['dollars']:,.0f}. "
+                f"**Gate B is the silicon-choice delta.**"
+            )
+        else:
+            _savings_dollars = _alt_testing['total_dollars'] - _testing['total_dollars']
+            _savings_hours = _alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']
+            st.markdown(
+                f"**If you picked an FP-native tier instead** "
+                f"(LP5X / Mid / High / 5090) at the same rigor + cadence, "
+                f"you'd avoid Gate B entirely. Savings:"
+            )
+            _cmp_a, _cmp_b, _cmp_c = st.columns(3)
+            _cmp_a.metric("Engineer hrs saved", f"{_savings_hours:.0f} hrs")
+            _cmp_b.metric("Compute cost saved", f"${_savings_dollars:,.0f}")
+            _cmp_c.metric("Gate B invocations avoided",
+                          f"{_testing['gate_b']['invocations']:.0f}")
+
+        st.markdown("---")
+
+        # Your actual tier at this rigor + cadence, with Gate A/B breakdown
+        st.markdown(
+            f"**Your actual cost** at **{_rigor.display_name.split(' (')[0]}** "
+            f"rigor, **{_retrain_freq}** cadence, shipping to **{hw.name}**:"
+        )
+        _ann_a, _ann_b, _ann_c = st.columns(3)
+        _ann_a.metric("Annual engineer time",
+                      f"{_testing['total_engineer_hours']:.0f} hrs")
+        _ann_b.metric("Annual compute cost",
+                      f"${_testing['total_dollars']:,.0f}")
+        _ann_c.metric("Annual wall time on pod",
+                      f"{_testing['total_wall_hours']:.0f} hrs")
+
+        # Gate A / Gate B breakdown table
+        st.caption("Gate breakdown (which tests fire on each retrain):")
+        _gate_rows = [
+            {
+                "Gate": "**A** — \"did the new training do what we wanted?\"",
+                "Invocations/yr": _testing['gate_a']['invocations'],
+                "Engineer hrs/yr": f"{_testing['gate_a']['engineer_hours']:.0f}",
+                "Compute $/yr": f"${_testing['gate_a']['dollars']:,.0f}",
+                "Required on": "every path (FP-native + INT8)",
+            },
+            {
+                "Gate": "**B** — \"did quantization damage anything Gate A validated?\"",
+                "Invocations/yr": _testing['gate_b']['invocations'],
+                "Engineer hrs/yr": f"{_testing['gate_b']['engineer_hours']:.0f}",
+                "Compute $/yr": f"${_testing['gate_b']['dollars']:,.0f}",
+                "Required on": "INT8-only silicon only",
+            },
+        ]
+        st.dataframe(pd.DataFrame(_gate_rows), width="stretch", hide_index=True)
+
+        # Cross-judge eval cost note per [docs] 2026-05-10 20:26 Gotcha #7
+        # closure. For cross-family fine-tune deployments, Gate A should
+        # include both judges (substring is insufficient — magnitude
+        # unreliable on cross-family intermediate-reasoning bases). The
+        # cost is small relative to compute but worth surfacing so customer
+        # eval budgets reflect actual practice.
         st.caption(
-            f"Breakdown: Gate A = {_alt_testing['gate_a']['invocations']} "
-            f"invocations @ ${_rigor.dollars_per_gate:.0f}/gate = "
-            f"${_alt_testing['gate_a']['dollars']:,.0f}. "
-            f"Gate B = {_alt_testing['gate_b']['invocations']} invocations @ "
-            f"${_rigor.dollars_per_gate:.0f}/gate = "
-            f"${_alt_testing['gate_b']['dollars']:,.0f}. "
-            f"**Gate B is the silicon-choice delta.**"
+            "💡 **Gate A semantic-grader cost** (per [docs] 2026-05-11 "
+            "white paper Finding 4 — semantic-by-default): add ~**$0.66 "
+            "per N=132 catalog regrade** (GPT-4o binary semantic judge, "
+            "Pydantic-validated, prompt-cached). The full 33-entry catalog "
+            "regrade cost ~$20 in ~10 min wall time. For cross-family FT "
+            "deployments, ALSO run two LLM-judges (Sonnet 4.6 + GPT-4o) at "
+            "~$5 per N=5 pass — substring is Qwen-family-biased so its "
+            "magnitudes are unreliable for FT comparisons. Negligible vs "
+            "fine-tune compute, but methodology hygiene matters for "
+            "customer-actionable estimates."
         )
-    else:
-        _savings_dollars = _alt_testing['total_dollars'] - _testing['total_dollars']
-        _savings_hours = _alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']
-        st.markdown(
-            f"**If you picked an FP-native tier instead** "
-            f"(LP5X / Mid / High / 5090) at the same rigor + cadence, "
-            f"you'd avoid Gate B entirely. Savings:"
-        )
-        _cmp_a, _cmp_b, _cmp_c = st.columns(3)
-        _cmp_a.metric("Engineer hrs saved", f"{_savings_hours:.0f} hrs")
-        _cmp_b.metric("Compute cost saved", f"${_savings_dollars:,.0f}")
-        _cmp_c.metric("Gate B invocations avoided",
-                      f"{_testing['gate_b']['invocations']:.0f}")
 
-    st.markdown("---")
+        # ── Parallelism / capacity check ──
+        # If annual wall-hours exceeds 8,760 (hours in a year), the gates
+        # literally can't run sequentially on one pod — you need parallel
+        # infrastructure. Same for engineer hours vs. FTE capacity (~1,800
+        # productive hrs/year per engineer). Surface this explicitly —
+        # at some combinations of cadence × rigor, the cost isn't a
+        # line item, it's a team + a datacenter.
+        HOURS_IN_YEAR = 8760
+        FTE_HOURS_PER_YEAR = 1800  # productive engineering hours
 
-    # Your actual tier at this rigor + cadence, with Gate A/B breakdown
-    st.markdown(
-        f"**Your actual cost** at **{_rigor.display_name.split(' (')[0]}** "
-        f"rigor, **{_retrain_freq}** cadence, shipping to **{hw.name}**:"
-    )
-    _ann_a, _ann_b, _ann_c = st.columns(3)
-    _ann_a.metric("Annual engineer time",
-                  f"{_testing['total_engineer_hours']:.0f} hrs")
-    _ann_b.metric("Annual compute cost",
-                  f"${_testing['total_dollars']:,.0f}")
-    _ann_c.metric("Annual wall time on pod",
-                  f"{_testing['total_wall_hours']:.0f} hrs")
+        _pods_needed = _testing['total_wall_hours'] / HOURS_IN_YEAR
+        _ftes_needed = _testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
+        _alt_pods_needed = _alt_testing['total_wall_hours'] / HOURS_IN_YEAR
+        _alt_ftes_needed = _alt_testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
 
-    # Gate A / Gate B breakdown table
-    st.caption("Gate breakdown (which tests fire on each retrain):")
-    _gate_rows = [
-        {
-            "Gate": "**A** — \"did the new training do what we wanted?\"",
-            "Invocations/yr": _testing['gate_a']['invocations'],
-            "Engineer hrs/yr": f"{_testing['gate_a']['engineer_hours']:.0f}",
-            "Compute $/yr": f"${_testing['gate_a']['dollars']:,.0f}",
-            "Required on": "every path (FP-native + INT8)",
-        },
-        {
-            "Gate": "**B** — \"did quantization damage anything Gate A validated?\"",
-            "Invocations/yr": _testing['gate_b']['invocations'],
-            "Engineer hrs/yr": f"{_testing['gate_b']['engineer_hours']:.0f}",
-            "Compute $/yr": f"${_testing['gate_b']['dollars']:,.0f}",
-            "Required on": "INT8-only silicon only",
-        },
-    ]
-    st.dataframe(pd.DataFrame(_gate_rows), width="stretch", hide_index=True)
-
-    # Cross-judge eval cost note per [docs] 2026-05-10 20:26 Gotcha #7
-    # closure. For cross-family fine-tune deployments, Gate A should
-    # include both judges (substring is insufficient — magnitude
-    # unreliable on cross-family intermediate-reasoning bases). The
-    # cost is small relative to compute but worth surfacing so customer
-    # eval budgets reflect actual practice.
-    st.caption(
-        "💡 **Gate A semantic-grader cost** (per [docs] 2026-05-11 "
-        "white paper Finding 4 — semantic-by-default): add ~**$0.66 "
-        "per N=132 catalog regrade** (GPT-4o binary semantic judge, "
-        "Pydantic-validated, prompt-cached). The full 33-entry catalog "
-        "regrade cost ~$20 in ~10 min wall time. For cross-family FT "
-        "deployments, ALSO run two LLM-judges (Sonnet 4.6 + GPT-4o) at "
-        "~$5 per N=5 pass — substring is Qwen-family-biased so its "
-        "magnitudes are unreliable for FT comparisons. Negligible vs "
-        "fine-tune compute, but methodology hygiene matters for "
-        "customer-actionable estimates."
-    )
-
-    # ── Parallelism / capacity check ──
-    # If annual wall-hours exceeds 8,760 (hours in a year), the gates
-    # literally can't run sequentially on one pod — you need parallel
-    # infrastructure. Same for engineer hours vs. FTE capacity (~1,800
-    # productive hrs/year per engineer). Surface this explicitly —
-    # at some combinations of cadence × rigor, the cost isn't a
-    # line item, it's a team + a datacenter.
-    HOURS_IN_YEAR = 8760
-    FTE_HOURS_PER_YEAR = 1800  # productive engineering hours
-
-    _pods_needed = _testing['total_wall_hours'] / HOURS_IN_YEAR
-    _ftes_needed = _testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
-    _alt_pods_needed = _alt_testing['total_wall_hours'] / HOURS_IN_YEAR
-    _alt_ftes_needed = _alt_testing['total_engineer_hours'] / FTE_HOURS_PER_YEAR
-
-    st.markdown("---")
-    st.markdown(
-        "**Capacity check — does this fit in a single pod / single engineer?**"
-    )
-    st.caption(
-        "A year has 8,760 hours. One pod running 24/7 at full duty can't "
-        "exceed that. An FTE produces ~1,800 productive hours/year. If "
-        "either number here is > 1, you need parallel infrastructure or "
-        "more people — this is no longer a line-item cost."
-    )
-    _cap_a, _cap_b = st.columns(2)
-    with _cap_a:
-        st.markdown(f"**{hw.name} (your tier)**")
-        _pods_str = f"{_pods_needed:.1f} pods needed"
-        _ftes_str = f"{_ftes_needed:.1f} FTEs needed"
-        if _pods_needed < 0.3 and _ftes_needed < 0.3:
-            st.success(f"🟢 Fits easily on 1 pod ({_pods_needed:.2f}× duty), "
-                       f"~{_ftes_needed:.2f} FTE needed")
-        elif _pods_needed < 1.0 and _ftes_needed < 1.0:
-            st.info(f"🟡 1 pod at {_pods_needed*100:.0f}% duty, "
-                    f"~{_ftes_needed:.1f} FTE")
-        elif _pods_needed < 3.0 or _ftes_needed < 3.0:
-            st.warning(f"🟠 **Needs {_pods_needed:.1f} parallel pods** running "
-                       f"24/7, **{_ftes_needed:.1f} FTEs** dedicated to "
-                       f"regression testing. Not a line item anymore.")
-        else:
-            st.error(f"🔴 **Needs {_pods_needed:.1f} parallel pods** running "
-                     f"24/7 AND **{_ftes_needed:.0f} full-time engineers**. "
-                     f"At this scale you're staffing a team + a datacenter "
-                     f"just to gate regression. Reconsider cadence × rigor.")
-    with _cap_b:
-        _alt_tier_label = ("INT8-only counterfactual" if _path_key == "fp_native"
-                           else "FP-native counterfactual")
-        st.markdown(f"**{_alt_tier_label}**")
-        if _alt_pods_needed < 0.3 and _alt_ftes_needed < 0.3:
-            st.success(f"🟢 Fits easily on 1 pod ({_alt_pods_needed:.2f}× duty), "
-                       f"~{_alt_ftes_needed:.2f} FTE needed")
-        elif _alt_pods_needed < 1.0 and _alt_ftes_needed < 1.0:
-            st.info(f"🟡 1 pod at {_alt_pods_needed*100:.0f}% duty, "
-                    f"~{_alt_ftes_needed:.1f} FTE")
-        elif _alt_pods_needed < 3.0 or _alt_ftes_needed < 3.0:
-            st.warning(f"🟠 **Needs {_alt_pods_needed:.1f} parallel pods**, "
-                       f"**{_alt_ftes_needed:.1f} FTEs**. Team + datacenter "
-                       f"budget, not line-item cost.")
-        else:
-            st.error(f"🔴 **Needs {_alt_pods_needed:.1f} parallel pods** AND "
-                     f"**{_alt_ftes_needed:.0f} full-time engineers**. "
-                     f"Team + datacenter-scale organizational commitment.")
-
-    # Additional QA burdens specific to this deployment model — these are
-    # NOT captured in the Gate A/B math above and represent a separate
-    # cost bucket the team needs to staff and budget.
-    if _deployment.additional_qa_burdens:
         st.markdown("---")
         st.markdown(
-            f"**Additional QA burdens specific to "
-            f"{_deployment.display_name.split(' (')[0]}** "
-            f"(NOT captured in Gate A+B cost above):"
+            "**Capacity check — does this fit in a single pod / single engineer?**"
         )
         st.caption(
-            "These are separate cost buckets — per-product-launch and "
-            "per-OTA-release spend that doesn't track with the retrain "
-            "cadence. Quantifying them requires product-specific data; "
-            "they're called out so the team doesn't forget to budget them."
+            "A year has 8,760 hours. One pod running 24/7 at full duty can't "
+            "exceed that. An FTE produces ~1,800 productive hours/year. If "
+            "either number here is > 1, you need parallel infrastructure or "
+            "more people — this is no longer a line-item cost."
         )
-        for burden in _deployment.additional_qa_burdens:
-            st.markdown(f"- {burden}")
+        _cap_a, _cap_b = st.columns(2)
+        with _cap_a:
+            st.markdown(f"**{hw.name} (your tier)**")
+            _pods_str = f"{_pods_needed:.1f} pods needed"
+            _ftes_str = f"{_ftes_needed:.1f} FTEs needed"
+            if _pods_needed < 0.3 and _ftes_needed < 0.3:
+                st.success(f"🟢 Fits easily on 1 pod ({_pods_needed:.2f}× duty), "
+                           f"~{_ftes_needed:.2f} FTE needed")
+            elif _pods_needed < 1.0 and _ftes_needed < 1.0:
+                st.info(f"🟡 1 pod at {_pods_needed*100:.0f}% duty, "
+                        f"~{_ftes_needed:.1f} FTE")
+            elif _pods_needed < 3.0 or _ftes_needed < 3.0:
+                st.warning(f"🟠 **Needs {_pods_needed:.1f} parallel pods** running "
+                           f"24/7, **{_ftes_needed:.1f} FTEs** dedicated to "
+                           f"regression testing. Not a line item anymore.")
+            else:
+                st.error(f"🔴 **Needs {_pods_needed:.1f} parallel pods** running "
+                         f"24/7 AND **{_ftes_needed:.0f} full-time engineers**. "
+                         f"At this scale you're staffing a team + a datacenter "
+                         f"just to gate regression. Reconsider cadence × rigor.")
+        with _cap_b:
+            _alt_tier_label = ("INT8-only counterfactual" if _path_key == "fp_native"
+                               else "FP-native counterfactual")
+            st.markdown(f"**{_alt_tier_label}**")
+            if _alt_pods_needed < 0.3 and _alt_ftes_needed < 0.3:
+                st.success(f"🟢 Fits easily on 1 pod ({_alt_pods_needed:.2f}× duty), "
+                           f"~{_alt_ftes_needed:.2f} FTE needed")
+            elif _alt_pods_needed < 1.0 and _alt_ftes_needed < 1.0:
+                st.info(f"🟡 1 pod at {_alt_pods_needed*100:.0f}% duty, "
+                        f"~{_alt_ftes_needed:.1f} FTE")
+            elif _alt_pods_needed < 3.0 or _alt_ftes_needed < 3.0:
+                st.warning(f"🟠 **Needs {_alt_pods_needed:.1f} parallel pods**, "
+                           f"**{_alt_ftes_needed:.1f} FTEs**. Team + datacenter "
+                           f"budget, not line-item cost.")
+            else:
+                st.error(f"🔴 **Needs {_alt_pods_needed:.1f} parallel pods** AND "
+                         f"**{_alt_ftes_needed:.0f} full-time engineers**. "
+                         f"Team + datacenter-scale organizational commitment.")
 
-    if _rigor.human_review:
-        st.warning(
-            f"⚠️ **Human red-team / domain-expert review required at "
-            f"{_rigor.display_name.split(' (')[0]} rigor.** The "
-            f"{_testing['total_engineer_hours']:.0f} engineer-hrs/year "
-            f"above includes ~{0.3 * _testing['total_engineer_hours']:.0f} "
-            f"hrs of senior-engineer / domain-specialist time that can't be "
-            f"automated away. Calendar time per release: 1-2 weeks."
-        )
-    elif _cost.regression_gate:
-        st.warning(
-            f"⚠️ **Regression gate required** — this path runs both Gate A "
-            f"and Gate B before shipping. Factor release-blocking risk: "
-            f"~10-20% of quant cycles need a re-tune pass (different calib "
-            f"data, different scheme parameters), which doubles Gate B cost "
-            f"when it fires."
-        )
-    else:
-        st.success(
-            f"🟢 **No Gate B on this tier — only Gate A fires.** Deploy the "
-            f"FP-native training artifact directly. The silicon-choice "
-            f"delta between this tier and an INT8-only tier at the same "
-            f"rigor is **${_alt_testing['total_dollars'] - _testing['total_dollars']:,.0f}/yr "
-            f"+ {_alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']:.0f} engineer-hrs/yr**."
-        )
+        # Additional QA burdens specific to this deployment model — these are
+        # NOT captured in the Gate A/B math above and represent a separate
+        # cost bucket the team needs to staff and budget.
+        if _deployment.additional_qa_burdens:
+            st.markdown("---")
+            st.markdown(
+                f"**Additional QA burdens specific to "
+                f"{_deployment.display_name.split(' (')[0]}** "
+                f"(NOT captured in Gate A+B cost above):"
+            )
+            st.caption(
+                "These are separate cost buckets — per-product-launch and "
+                "per-OTA-release spend that doesn't track with the retrain "
+                "cadence. Quantifying them requires product-specific data; "
+                "they're called out so the team doesn't forget to budget them."
+            )
+            for burden in _deployment.additional_qa_burdens:
+                st.markdown(f"- {burden}")
 
-    with st.expander(f"What \"{_rigor.display_name.split(' (')[0]}\" "
-                     f"rigor actually covers", expanded=False):
-        st.markdown(f"**Tier:** {_rigor.display_name}")
-        st.markdown(f"**Test count:** {_rigor.test_count}")
-        st.markdown(f"**Per-gate cost:** ~${_rigor.dollars_per_gate:.0f} + "
-                    f"{_rigor.engineer_hours_per_gate:.1f} engineer hrs + "
-                    f"{_rigor.wall_hours_per_gate:.1f} wall hrs")
-        st.markdown(f"**Human review:** "
-                    f"{'required' if _rigor.human_review else 'not required'}")
-        st.markdown(f"**Notes:** {_rigor.notes}")
+        if _rigor.human_review:
+            st.warning(
+                f"⚠️ **Human red-team / domain-expert review required at "
+                f"{_rigor.display_name.split(' (')[0]} rigor.** The "
+                f"{_testing['total_engineer_hours']:.0f} engineer-hrs/year "
+                f"above includes ~{0.3 * _testing['total_engineer_hours']:.0f} "
+                f"hrs of senior-engineer / domain-specialist time that can't be "
+                f"automated away. Calendar time per release: 1-2 weeks."
+            )
+        elif _cost.regression_gate:
+            st.warning(
+                f"⚠️ **Regression gate required** — this path runs both Gate A "
+                f"and Gate B before shipping. Factor release-blocking risk: "
+                f"~10-20% of quant cycles need a re-tune pass (different calib "
+                f"data, different scheme parameters), which doubles Gate B cost "
+                f"when it fires."
+            )
+        else:
+            st.success(
+                f"🟢 **No Gate B on this tier — only Gate A fires.** Deploy the "
+                f"FP-native training artifact directly. The silicon-choice "
+                f"delta between this tier and an INT8-only tier at the same "
+                f"rigor is **${_alt_testing['total_dollars'] - _testing['total_dollars']:,.0f}/yr "
+                f"+ {_alt_testing['total_engineer_hours'] - _testing['total_engineer_hours']:.0f} engineer-hrs/yr**."
+            )
 
-    with st.expander("Sources & defensibility — where these numbers come from",
+        with st.expander(f"What \"{_rigor.display_name.split(' (')[0]}\" "
+                         f"rigor actually covers", expanded=False):
+            st.markdown(f"**Tier:** {_rigor.display_name}")
+            st.markdown(f"**Test count:** {_rigor.test_count}")
+            st.markdown(f"**Per-gate cost:** ~${_rigor.dollars_per_gate:.0f} + "
+                        f"{_rigor.engineer_hours_per_gate:.1f} engineer hrs + "
+                        f"{_rigor.wall_hours_per_gate:.1f} wall hrs")
+            st.markdown(f"**Human review:** "
+                        f"{'required' if _rigor.human_review else 'not required'}")
+            st.markdown(f"**Notes:** {_rigor.notes}")
+
+        with st.expander("Sources & defensibility — where these numbers come from",
+                         expanded=False):
+            st.markdown("""
+    **Honest disclosure:** per-cycle regression-testing costs are **not
+    published** in any industry report. Stanford HAI AI Index, Epoch AI,
+    SemiAnalysis — none of them break out eval-pipeline cost as a line item.
+    Big AI shops (Anthropic, OpenAI, DeepMind, Meta) treat eval
+    infrastructure as a competitive moat. These numbers are engineering
+    estimates, not sourced from a citable figure.
+
+    **What IS publicly sourceable and brackets the estimates:**
+
+    **LLM-as-judge API pricing** — directly citable to vendor pages. At
+    nightly-rigor scale (~10K prompts × ~1.5K tokens/prompt with
+    Claude 3.5 Sonnet at $3/M input + $15/M output):
+
+    - Anthropic: [anthropic.com/pricing](https://www.anthropic.com/pricing)
+      → Claude 3.5 Sonnet: $3/M input, $15/M output
+    - OpenAI: [openai.com/api/pricing](https://openai.com/api/pricing)
+      → GPT-4o: $2.50/M input, $10/M output
+    - Google: [ai.google.dev/pricing](https://ai.google.dev/pricing)
+      → Gemini 1.5 Pro: $1.25/M input, $5/M output
+
+    **Derived nightly-gate math:** 10K prompts × (1K input + 500 output
+    tokens) via Claude Sonnet = 10M input + 5M output = **$30 + $75 = ~$105
+    in judge API fees alone** per gate. Our $150/gate estimate adds
+    ~$45 infra/compute overhead for the model-under-test. Defensible.
+
+    **Red-team scale** — citable as *hours-order-of-magnitude* evidence for
+    the pre-release rigor tier:
+
+    - Ganguli et al. 2022, "Red Teaming Language Models to Reduce Harms"
+      (Anthropic, [arXiv:2209.07858](https://arxiv.org/abs/2209.07858)):
+      published 38,961 red-team attempts across 4 models using Surge AI
+      crowdworkers. $ cost NOT published.
+    - GPT-4 System Card (OpenAI, March 2023): 50+ external red-teamers
+      over ~6 months. Implies thousands of expert-hours per major release.
+      Our 40-hr pre-release-gate estimate is a *lower bound*, not upper.
+    - Gemini Tech Report (DeepMind): describes eval framework, no costs.
+
+    **RLHF / human-annotation pricing** — adjacent comparable (annotation,
+    not grading):
+
+    - Scale AI / Surge AI: public marketing quotes $1-5 per pairwise
+      comparison; $20-50/hr for expert red-teamers (reported in *The
+      Information*, *Semafor* 2023-2024; no authoritative rate card).
+    - Anthropic HH-RLHF dataset (Bai et al. 2022,
+      [arXiv:2204.05862](https://arxiv.org/abs/2204.05862)): 161K
+      comparisons collected. At rumored $1-3 each → ~$160-480K dataset
+      cost. Anthropic has not officially confirmed.
+
+    **The "hidden tech debt in ML" argument** — qualitative foundation:
+
+    - Sculley et al. 2015, "Hidden Technical Debt in ML Systems"
+      (Google, NeurIPS). Foundational on ongoing ML maintenance cost —
+      qualitative, not quantified.
+    - Paleyes et al. 2022, "Challenges in Deploying Machine Learning"
+      ([arXiv:2011.09926](https://arxiv.org/abs/2011.09926)). MLOps survey
+      documents regression testing as a known cost center, doesn't
+      quantify.
+
+    **How to defend these numbers in an architecture review:**
+
+    1. Cite the vendor pricing pages for the API-fee floor (directly
+       citable)
+    2. Cite Ganguli 2022 + GPT-4 system card for red-team scale
+       (order-of-magnitude evidence)
+    3. Acknowledge the infra/engineer-hour multipliers as engineering
+       estimate — invite counter-proposals rather than defending specific
+       numbers
+    4. Frame the conclusion as "the DELTA between FP-native and INT8-only
+       silicon is the Gate B full-suite cost, which scales linearly with
+       rigor tier — whatever rigor tier your team operates at, that
+       number is the recurring lifecycle tax"
+
+    The structural argument (tiered testing, Gate A + Gate B doubling,
+    lifecycle vs BOM cost) doesn't depend on the exact numbers being
+    right. The specific $ values are calibration targets to replace with
+    your own if your organization has measured data.
+    """)
+
+    with st.expander("Why this cost exists — the hidden silicon trade-off",
                      expanded=False):
-        st.markdown("""
-**Honest disclosure:** per-cycle regression-testing costs are **not
-published** in any industry report. Stanford HAI AI Index, Epoch AI,
-SemiAnalysis — none of them break out eval-pipeline cost as a line item.
-Big AI shops (Anthropic, OpenAI, DeepMind, Meta) treat eval
-infrastructure as a competitive moat. These numbers are engineering
-estimates, not sourced from a citable figure.
+        st.markdown(f"""
+    **What we're measuring:** {_cost.notes}
 
-**What IS publicly sourceable and brackets the estimates:**
+    **The four-rung ladder of retargeting cost:**
 
-**LLM-as-judge API pricing** — directly citable to vendor pages. At
-nightly-rigor scale (~10K prompts × ~1.5K tokens/prompt with
-Claude 3.5 Sonnet at $3/M input + $15/M output):
+    | Path | Per-cycle wall | Per-cycle $ | Per-cycle engineer hrs | Regression gate? |
+    |---|---:|---:|---:|:---:|
+    | **FP-native** (same precision as trained) | 0 min | $0 | 0 hrs | no |
+    | **Weight-only quant** (Q4_K_M / Q8_0) | ~5 min | $0 | 0.1 hrs | no |
+    | **PTQ W8A8 INT8** (what we ran today) | ~55 min | ~$1.75 | ~1.5 hrs | **yes** |
+    | **Quantization-aware training** | 4-8 hrs | $30-100 | ~4 hrs | **yes** |
 
-- Anthropic: [anthropic.com/pricing](https://www.anthropic.com/pricing)
-  → Claude 3.5 Sonnet: $3/M input, $15/M output
-- OpenAI: [openai.com/api/pricing](https://openai.com/api/pricing)
-  → GPT-4o: $2.50/M input, $10/M output
-- Google: [ai.google.dev/pricing](https://ai.google.dev/pricing)
-  → Gemini 1.5 Pro: $1.25/M input, $5/M output
+    **What this means for the architecture decision:**
 
-**Derived nightly-gate math:** 10K prompts × (1K input + 500 output
-tokens) via Claude Sonnet = 10M input + 5M output = **$30 + $75 = ~$105
-in judge API fees alone** per gate. Our $150/gate estimate adds
-~$45 infra/compute overhead for the model-under-test. Defensible.
+    - INT8-only silicon forces either **PTQ** (every retrain = 55-minute pod job
+      + 1.5 engineer hrs + human signoff) or **QAT** (multiply by 10). This is
+      **paid forever**, not once.
+    - FP-native silicon (bf16/FP8) lets you ship the training artifact directly.
+      Zero retargeting cost per cycle.
+    - For a model that retrains weekly (Skippy's current pattern), INT8-only
+      silicon adds **~75-80 engineer-hours/year + $90/year in compute** just
+      for the quant-regression gate. For a product line with N customer
+      fine-tunes, multiply by N.
+    - For a frozen-model consumer device, this cost is negligible. For a
+      platform that supports continuous fine-tuning or customer-specific
+      model customization, it's often **larger than the BOM savings from
+      the cheaper INT8-only silicon**.
 
-**Red-team scale** — citable as *hours-order-of-magnitude* evidence for
-the pre-release rigor tier:
+    **The missing row in most precision trade-off matrices:**
+    → Per-unit BOM cost is a ONE-TIME win (factored into gross margin)
+    → Per-retrain retargeting cost is a RECURRING expense (factored into
+       OPEX, engineer time, and release velocity)
 
-- Ganguli et al. 2022, "Red Teaming Language Models to Reduce Harms"
-  (Anthropic, [arXiv:2209.07858](https://arxiv.org/abs/2209.07858)):
-  published 38,961 red-team attempts across 4 models using Surge AI
-  crowdworkers. $ cost NOT published.
-- GPT-4 System Card (OpenAI, March 2023): 50+ external red-teamers
-  over ~6 months. Implies thousands of expert-hours per major release.
-  Our 40-hr pre-release-gate estimate is a *lower bound*, not upper.
-- Gemini Tech Report (DeepMind): describes eval framework, no costs.
-
-**RLHF / human-annotation pricing** — adjacent comparable (annotation,
-not grading):
-
-- Scale AI / Surge AI: public marketing quotes $1-5 per pairwise
-  comparison; $20-50/hr for expert red-teamers (reported in *The
-  Information*, *Semafor* 2023-2024; no authoritative rate card).
-- Anthropic HH-RLHF dataset (Bai et al. 2022,
-  [arXiv:2204.05862](https://arxiv.org/abs/2204.05862)): 161K
-  comparisons collected. At rumored $1-3 each → ~$160-480K dataset
-  cost. Anthropic has not officially confirmed.
-
-**The "hidden tech debt in ML" argument** — qualitative foundation:
-
-- Sculley et al. 2015, "Hidden Technical Debt in ML Systems"
-  (Google, NeurIPS). Foundational on ongoing ML maintenance cost —
-  qualitative, not quantified.
-- Paleyes et al. 2022, "Challenges in Deploying Machine Learning"
-  ([arXiv:2011.09926](https://arxiv.org/abs/2011.09926)). MLOps survey
-  documents regression testing as a known cost center, doesn't
-  quantify.
-
-**How to defend these numbers in an architecture review:**
-
-1. Cite the vendor pricing pages for the API-fee floor (directly
-   citable)
-2. Cite Ganguli 2022 + GPT-4 system card for red-team scale
-   (order-of-magnitude evidence)
-3. Acknowledge the infra/engineer-hour multipliers as engineering
-   estimate — invite counter-proposals rather than defending specific
-   numbers
-4. Frame the conclusion as "the DELTA between FP-native and INT8-only
-   silicon is the Gate B full-suite cost, which scales linearly with
-   rigor tier — whatever rigor tier your team operates at, that
-   number is the recurring lifecycle tax"
-
-The structural argument (tiered testing, Gate A + Gate B doubling,
-lifecycle vs BOM cost) doesn't depend on the exact numbers being
-right. The specific $ values are calibration targets to replace with
-your own if your organization has measured data.
-""")
-
-with st.expander("Why this cost exists — the hidden silicon trade-off",
-                 expanded=False):
-    st.markdown(f"""
-**What we're measuring:** {_cost.notes}
-
-**The four-rung ladder of retargeting cost:**
-
-| Path | Per-cycle wall | Per-cycle $ | Per-cycle engineer hrs | Regression gate? |
-|---|---:|---:|---:|:---:|
-| **FP-native** (same precision as trained) | 0 min | $0 | 0 hrs | no |
-| **Weight-only quant** (Q4_K_M / Q8_0) | ~5 min | $0 | 0.1 hrs | no |
-| **PTQ W8A8 INT8** (what we ran today) | ~55 min | ~$1.75 | ~1.5 hrs | **yes** |
-| **Quantization-aware training** | 4-8 hrs | $30-100 | ~4 hrs | **yes** |
-
-**What this means for the architecture decision:**
-
-- INT8-only silicon forces either **PTQ** (every retrain = 55-minute pod job
-  + 1.5 engineer hrs + human signoff) or **QAT** (multiply by 10). This is
-  **paid forever**, not once.
-- FP-native silicon (bf16/FP8) lets you ship the training artifact directly.
-  Zero retargeting cost per cycle.
-- For a model that retrains weekly (Skippy's current pattern), INT8-only
-  silicon adds **~75-80 engineer-hours/year + $90/year in compute** just
-  for the quant-regression gate. For a product line with N customer
-  fine-tunes, multiply by N.
-- For a frozen-model consumer device, this cost is negligible. For a
-  platform that supports continuous fine-tuning or customer-specific
-  model customization, it's often **larger than the BOM savings from
-  the cheaper INT8-only silicon**.
-
-**The missing row in most precision trade-off matrices:**
-→ Per-unit BOM cost is a ONE-TIME win (factored into gross margin)
-→ Per-retrain retargeting cost is a RECURRING expense (factored into
-   OPEX, engineer time, and release velocity)
-
-A rigorous architecture decision needs both rows.
-""")
+    A rigorous architecture decision needs both rows.
+    """)
 
 
 
-# Measured provenance panel
-with st.expander("Measured data provenance", expanded=False):
+    # Measured provenance panel
+
+with _tab_data:
+    # Tab content is its own surface — drop the nested expander wrapper
+    # since the user explicitly landed here to see the provenance data.
     bs = get_bundle_summary()
-    st.write("**Bundle metadata**")
+    st.subheader("Bundle metadata")
     st.json(bs["bundle_meta"])
-    st.write("**Per-model measured workloads**")
+    st.subheader("Per-model measured workloads")
     st.json(bs["workloads_per_model"])
+
