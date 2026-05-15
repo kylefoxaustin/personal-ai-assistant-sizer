@@ -87,20 +87,55 @@ with st.sidebar:
                "Measured baseline: RTX 5090 bake-offs from "
                "personal-ai-framework `eval/run_sizer_bakeoffs.py`.")
 
-    model_keys = list(MODELS.keys())
-    # Default to current production model (Skippy 7B v4 dense per
-    # [docs] 2026-05-04 22:20 + 2026-05-06 09:51). Was previously
-    # qwen3-30b-a3b-q4-moe; shifted to track actual shipping model.
+    # ── Role-prefixed model dropdown (2026-05-15) ─────────────────
+    # 20 catalog entries is too many for "scan and pick" without
+    # visual scaffolding. Classify each entry by role and sort so the
+    # production model is first, then fine-tune experiments, then
+    # stock public bases, then quant/compute-path perf-reference rows.
+    # Role is derived from existing fields (PRODUCTION_REFERENCE_KEY,
+    # perf_reference_only, training) — no new MODELS schema.
+    def _model_role(k: str) -> tuple[str, str]:
+        if k == PRODUCTION_REFERENCE_KEY:
+            return "PROD", "🚀"
+        m = MODELS[k]
+        if m.get("perf_reference_only"):
+            return "PERF", "⚙️"
+        training = m.get("training", "")
+        if training.startswith("skippy_"):
+            return "FT", "🔬"
+        return "BASE", "📚"
+
+    _ROLE_PRIORITY = {"PROD": 0, "FT": 1, "BASE": 2, "PERF": 3}
+    _original_index = {k: i for i, k in enumerate(MODELS.keys())}
+    # Sort by (role priority, then original dict order within the role).
+    # Original dict order in npu_model.py is the curated within-role
+    # ordering (e.g., 14B v4 before 32B v4 within FT) so preserve it.
+    model_keys = sorted(
+        MODELS.keys(),
+        key=lambda k: (_ROLE_PRIORITY[_model_role(k)[0]], _original_index[k]),
+    )
+
+    def _format_model(k: str) -> str:
+        role, badge = _model_role(k)
+        return f"{badge} {role} · {MODELS[k]['display_name']}"
+
+    # Default is the production model — by construction it's first in
+    # the sorted list, but keep the explicit index= for clarity.
     model_key = st.selectbox(
         "Model",
         options=model_keys,
-        format_func=lambda k: MODELS[k]["display_name"],
+        format_func=_format_model,
         index=model_keys.index(PRODUCTION_REFERENCE_KEY),
         key="k_model",
-        help="MoE decode tok/s scales with active params (~3B) not total "
-             "params (~30B). Dense 14B moves ~5× more bytes per decoded "
-             "token. Default lands on the current production model "
-             "(Skippy 7B v4 dense).",
+        help="Badges: 🚀 PROD = current production model (Skippy 7B v4 "
+             "dense). 🔬 FT = Skippy fine-tune experiment (validated or "
+             "cautionary; see Accuracy details). 📚 BASE = stock public "
+             "base model (apples-to-apples comparison anchor). ⚙️ PERF "
+             "= perf-reference quant or compute-path variant of an "
+             "existing entry (no separate eval; for sizing comparisons "
+             "only). MoE decode tok/s scales with active params (~3B), "
+             "not total (~30B). Dense 14B moves ~5× more bytes per "
+             "decoded token.",
     )
 
     # ── Per-model accuracy caption + expander ──
