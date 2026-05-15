@@ -24,7 +24,7 @@ from sizer.npu_anchors import load_llm_anchor, load_cnn_anchor
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
     decode_tok_s_at_context, project_what_if_decode_tok_s,
-    what_if_memory_feasibility,
+    what_if_memory_feasibility, hw_supports_dtype,
     PRODUCTION_REFERENCE_KEY, CATEGORY_LABELS,
 )
 from sizer.precision import (
@@ -87,13 +87,28 @@ with st.sidebar:
                "Measured baseline: RTX 5090 bake-offs from "
                "personal-ai-framework `eval/run_sizer_bakeoffs.py`.")
 
-    # ── Role-prefixed model dropdown (2026-05-15) ─────────────────
+    # ── Role-prefixed + tier-aware model dropdown (2026-05-15) ────
     # 20 catalog entries is too many for "scan and pick" without
-    # visual scaffolding. Classify each entry by role and sort so the
-    # production model is first, then fine-tune experiments, then
-    # stock public bases, then quant/compute-path perf-reference rows.
-    # Role is derived from existing fields (PRODUCTION_REFERENCE_KEY,
-    # perf_reference_only, training) — no new MODELS schema.
+    # visual scaffolding. Two things happen here:
+    #
+    # (a) Classify each entry by role (PROD/FT/BASE/PERF) — derived
+    #     from existing fields (PRODUCTION_REFERENCE_KEY,
+    #     perf_reference_only, training). No new MODELS schema.
+    #
+    # (b) Mark models whose compute_dtype can't execute on the
+    #     currently-selected tier with a 🔴 marker AND sort them to
+    #     the bottom of the list. The tier-aware filter reads
+    #     `st.session_state.k_tier` from the previous render — on the
+    #     first render the default tier ("NPU High") supports both
+    #     INT8 and FP16, so everything is compatible. After the user
+    #     changes tier, the model dropdown reorders on the next rerun.
+    #     The currently-selected model stays selected (sticky via key=)
+    #     even if it becomes incompatible — that surfaces the existing
+    #     🔴 dtype_mismatch banner in the main pane, which has the full
+    #     remediation guidance (re-quantize / fall back / move tier).
+    _preview_tier_name = st.session_state.get("k_tier", "NPU High")
+    _preview_hw = TIERS.get(_preview_tier_name, TIERS["NPU High"])
+
     def _model_role(k: str) -> tuple[str, str]:
         if k == PRODUCTION_REFERENCE_KEY:
             return "PROD", "🚀"
@@ -105,22 +120,34 @@ with st.sidebar:
             return "FT", "🔬"
         return "BASE", "📚"
 
+    def _model_compatible(k: str) -> bool:
+        return hw_supports_dtype(_preview_hw, MODELS[k]["compute_dtype"])
+
     _ROLE_PRIORITY = {"PROD": 0, "FT": 1, "BASE": 2, "PERF": 3}
     _original_index = {k: i for i, k in enumerate(MODELS.keys())}
-    # Sort by (role priority, then original dict order within the role).
-    # Original dict order in npu_model.py is the curated within-role
-    # ordering (e.g., 14B v4 before 32B v4 within FT) so preserve it.
+    # Sort by (compatibility, role priority, original dict order).
+    # Compatible models float to the top; incompatible (🔴) sink. Within
+    # each compatibility group, PROD/FT/BASE/PERF priority + original
+    # within-role ordering (e.g., 14B v4 before 32B v4) is preserved.
     model_keys = sorted(
         MODELS.keys(),
-        key=lambda k: (_ROLE_PRIORITY[_model_role(k)[0]], _original_index[k]),
+        key=lambda k: (
+            0 if _model_compatible(k) else 1,
+            _ROLE_PRIORITY[_model_role(k)[0]],
+            _original_index[k],
+        ),
     )
 
     def _format_model(k: str) -> str:
         role, badge = _model_role(k)
-        return f"{badge} {role} · {MODELS[k]['display_name']}"
+        compat_prefix = "" if _model_compatible(k) else "🔴 "
+        return f"{compat_prefix}{badge} {role} · {MODELS[k]['display_name']}"
 
-    # Default is the production model — by construction it's first in
-    # the sorted list, but keep the explicit index= for clarity.
+    # Default is the production model. On the first render the default
+    # tier (NPU High) is FP-capable, so PROD lands at index 0. If the
+    # user has previously selected an incompatible tier, the production
+    # model still appears (just lower in the list); Streamlit's sticky
+    # selection holds whatever model_key was last chosen via key=.
     model_key = st.selectbox(
         "Model",
         options=model_keys,
@@ -133,9 +160,12 @@ with st.sidebar:
              "base model (apples-to-apples comparison anchor). ⚙️ PERF "
              "= perf-reference quant or compute-path variant of an "
              "existing entry (no separate eval; for sizing comparisons "
-             "only). MoE decode tok/s scales with active params (~3B), "
-             "not total (~30B). Dense 14B moves ~5× more bytes per "
-             "decoded token.",
+             "only). 🔴 prefix = this model's compute precision can't "
+             "execute on the currently-selected NPU Tier (e.g. fp16 "
+             "models on NPU Mid's INT8-only silicon); incompatible "
+             "models are sorted to the bottom. MoE decode tok/s scales "
+             "with active params (~3B), not total (~30B). Dense 14B "
+             "moves ~5× more bytes per decoded token.",
     )
 
     # ── Per-model accuracy caption + expander ──
