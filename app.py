@@ -168,6 +168,18 @@ with st.sidebar:
              "moves ~5× more bytes per decoded token.",
     )
 
+    # Visible legend so users don't have to hover the ? icon. Compact
+    # single line; Streamlit captions wrap gracefully in the sidebar's
+    # narrow column. Per Kyle 2026-05-15: Streamlit selectbox doesn't
+    # support per-option tooltips, so a visible legend is the cleanest
+    # way to surface the icon meanings. When the user selects a 🔴
+    # row, the existing main-pane dtype_mismatch banner provides the
+    # full remediation guidance (re-quantize / fall back / move tier).
+    st.caption(
+        "🚀 production · 🔬 fine-tune · 📚 stock base · "
+        "⚙️ perf reference · 🔴 won't run on this NPU tier"
+    )
+
     # ── Per-model accuracy caption + expander ──
     # Shows pass rate on Skippy v2+RAG eval (132 prompts) plus Δpp vs
     # the production reference (Skippy MoE fine-tune). The accuracy
