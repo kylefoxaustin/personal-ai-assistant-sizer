@@ -506,248 +506,6 @@ st.markdown(f"**Tier:** {tier_name}  &nbsp;·&nbsp;  **Workload:** "
             f"_{WORKLOAD_DEFAULTS[workload_id]['label']}_  &nbsp;·&nbsp;  "
             f"{prompt_tokens:,} prompt / {decode_tokens:,} decode tokens")
 
-# ── Accuracy details — moved here from sidebar 2026-05-11 to give the
-#    Finding 4 methodology tables main-pane width (~800-1000px) instead
-#    of the sidebar's ~200px column, which was chopping table cells
-#    mid-word. Mirrors keyhole-sizer dd17baa.
-if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_only"):
-    with st.expander("📊 Accuracy details"):
-        st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
-        st.markdown("---")
-        st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
-        _catalog_rows: list[dict] = []
-        for _k, _m in MODELS.items():
-            if "pass_rate" not in _m:
-                continue
-            _row_delta = (_m["pass_rate"] - _production_model["pass_rate"]) * 100.0
-            _row_delta_str = (
-                "—  (reference)" if _k == PRODUCTION_REFERENCE_KEY
-                else f"{('+' if _row_delta >= 0 else '')}{_row_delta:.1f}pp"
-            )
-            _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
-            _catalog_rows.append({
-                "Model":            _row_label,
-                "Base":             _m.get("base_model", "—"),
-                "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
-                "Δ vs production":  _row_delta_str,
-                "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
-                "Training":         _m.get("training", "—"),
-            })
-        st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
-        # Sister-model confound caveat per [docs] 2026-05-05 09:45
-        # base-identity audit: the "Δ vs production" column compares
-        # rows with potentially different base models. Skippy MoE FT
-        # was trained on Qwen3-30B-A3B-Instruct-2507; the Thinking-2507
-        # row is its sister model (different base, not a fine-tune-vs-
-        # base measurement). Apples-to-apples fine-tune gain anchors
-        # are the dense Qwen 2.5 fine-tunes (validated +3.1pp / +5.3pp
-        # vs respective Instruct bases on 7B / 14B).
-        st.caption(
-            "**Read the Base column carefully.** Δ values between rows "
-            "with different bases mix two factors: (a) base architecture "
-            "differences and (b) training differences. The Δ between "
-            "the Skippy MoE FT row (Instruct-2507 base) and the "
-            "Thinking-2507 stock row is a *sister-model* comparison — "
-            "not a fine-tune-vs-base measurement. Apples-to-apples "
-            "fine-tune gains are validated on dense Qwen 2.5 (7B v4 "
-            "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
-            "MoE-base validation pending an MoE-aware LoRA recipe."
-        )
-
-        # Per-category breakdown rendering — handles two schemas:
-        # (a) dict-of-dicts (Tier 3 schema, 2026-05-07): each entry
-        #     is {"pass": N, "n": total, "rate": fraction}. Renders
-        #     raw counts + Δ vs production where production also has
-        #     dict-of-dicts data. This is the preferred shape going
-        #     forward.
-        # (b) signed-int (legacy): each entry is a signed delta vs
-        #     OLD production reference. Renders as before. Surviving
-        #     legacy entries are flagged as awaiting migration.
-        _cat_deltas = _selected_model.get("category_deltas") or {}
-        _has_rich = any(isinstance(v, dict) for v in _cat_deltas.values())
-        _has_legacy_int = any(isinstance(v, (int, float))
-                               for v in _cat_deltas.values())
-
-        if _has_rich:
-            # Dict-of-dicts. Show this model's raw counts + Δ vs
-            # production where production has matching data.
-            _ref_short = _production_model["display_name"].split(" (")[0]
-            _prod_cats = _production_model.get("category_deltas") or {}
-            _prod_has_rich = any(isinstance(v, dict)
-                                  for v in _prod_cats.values())
-            if _prod_has_rich:
-                st.markdown(
-                    f"**Per-category breakdown** (raw rates; Δ vs "
-                    f"production = {_ref_short}):"
-                )
-            else:
-                st.markdown(
-                    "**Per-category breakdown** (raw rates; production "
-                    "ref is missing per-category data — Δ unavailable):"
-                )
-            for cat, cat_data in _cat_deltas.items():
-                cat_label = CATEGORY_LABELS.get(cat, cat)
-                p, n = cat_data["pass"], cat_data["n"]
-                rate_pct = cat_data["rate"] * 100.0
-                line = (f"- {cat_label}: **{p}/{n}** "
-                        f"({rate_pct:.1f}%)")
-                prod_cat = _prod_cats.get(cat)
-                if isinstance(prod_cat, dict):
-                    d_passes = p - prod_cat["pass"]
-                    sign = "+" if d_passes >= 0 else ""
-                    line += f" — Δ vs prod: **{sign}{d_passes} passes**"
-                st.markdown(line)
-            st.caption(
-                "Per-category data from [docs] eval JSONs (132-sample "
-                "v2-RAG, RAG on, deterministic temp=0). Δ vs production "
-                "computed at render time from raw counts."
-            )
-        elif _has_legacy_int:
-            # Legacy signed-int delta-vs-production schema.
-            _ref_short = _production_model["display_name"].split(" (")[0]
-            st.markdown(
-                f"**Per-category Δ vs production** ({_ref_short}, "
-                f"positive = this model wins):"
-            )
-            for cat, dp in _cat_deltas.items():
-                cat_label = CATEGORY_LABELS.get(cat, cat)
-                sign = "+" if dp >= 0 else ""
-                st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
-            st.caption(
-                "⚠️ Legacy schema (signed-int delta). Awaiting migration "
-                "to dict-of-dicts raw rates. Categories not listed are "
-                "flat ±0 vs the original production reference."
-            )
-        elif _is_production:
-            st.caption(
-                "Production reference — per-category Δ is zero against "
-                "itself. Switch the selector above to see breakdowns "
-                "for the alternative entries."
-            )
-        else:
-            # Entry has empty category_deltas — pending [docs] data
-            st.caption(
-                "Per-category breakdown not yet populated for this "
-                "entry. (Awaiting eval-side per-category data from "
-                "[docs] for older catalog entries.)"
-            )
-
-        # Eval methodology section — per [docs] 2026-05-11 09:31
-        # white paper Finding 4 closure (semantic-regrade campaign:
-        # 33 catalog entries regraded via GPT-4o binary semantic
-        # judge; substring shown to be Qwen-family-biased). Reviewer's
-        # framing: 'the Qwen-family format bias finding is, in my
-        # read, the single most valuable methodology output of this
-        # entire campaign — more valuable than gotcha #7, more
-        # valuable than the two-factor model'.
-        st.markdown("---")
-        st.markdown("**📐 Eval methodology — Finding 4: Qwen-family format bias (semantic regrade)**")
-        st.markdown(
-            "The headline pass-rate numbers above now use **semantic "
-            "grading** (GPT-4o binary semantic judge, 132-sample "
-            "v2-RAG, deterministic temp=0) per [docs] 2026-05-11 "
-            "white paper Finding 4. Substring grading is retained "
-            "only for the 2 entries where _semantic.json was not "
-            "produced (qwen3-30b-a3b-q4-moe, qwen2.5-14b-q4-dense — "
-            "both flagged in their accuracy_bullet)."
-        )
-        st.markdown("**Why the headline switched** — the production model's substring-headline-lift eroded across five successive cross-checks:")
-        st.markdown(
-            "| # | Cross-check | Result |\n"
-            "|---|---|---|\n"
-            "| 1 | Substring (original headline) | **+3.1pp** vs base |\n"
-            "| 2 | LLM-judge (Sonnet 4.6) | **−0.35** |\n"
-            "| 3 | Temperature=0.3 substring | **−29.3pp** |\n"
-            "| 4 | Cross-judge (GPT-4o) | **−0.69** |\n"
-            "| 5 | **Semantic regrade** (132-sample binary) | **−4.6pp** (sign reversal) |"
-        )
-        st.markdown(
-            "**Finding 4 (verbatim, [docs] 2026-05-11 white paper):** "
-            "*'The recipe's value is voice transfer and safety "
-            "calibration, not capability lift; the substring-headline-"
-            "capability gain on this corpus was a format-fidelity "
-            "artifact specific to Qwen-shaped phrasings in the "
-            "training data.'*"
-        )
-        st.markdown("**Substring is biased — per-family regrade Δ** (33-entry catalog, semantic minus substring):")
-        st.markdown(
-            "| Family | Regrade Δ direction | Interpretation |\n"
-            "|---|---|---|\n"
-            "| Qwen-family fine-tunes | **−3.2 to −12.7pp** | Substring over-graded (gold tokens are Qwen-shaped) |\n"
-            "| Non-Qwen stock bases (Gemma/Llama/Mistral) | **+1.6 to +6.0pp** | Substring under-graded |\n"
-            "| Gemma 9B v4 (cross-family) | +5.4pp | Only cross-family FT that lifts under both graders |\n"
-            "| Mistral/Llama/Yi v4 | flat-to-down | Substring direction confirmed |"
-        )
-        st.markdown("**Two-factor model — partially falsified by semantic regrade:**")
-        st.markdown(
-            "> Original (substring): *'Lift requires either ceiling "
-            "stock reasoning (6/6) OR family-match.'*  \n"
-            "> Refined (semantic): *'Substring lift requires either "
-            "ceiling reasoning OR family-match. Semantic lift "
-            "requires either ceiling reasoning OR Qwen-14B "
-            "specifically. The production 7B v4 lifts on substring "
-            "but not on semantic — its apparent capability gain "
-            "was largely format-fidelity matching trained Qwen "
-            "phrasings.'*"
-        )
-        st.markdown("**Customer guidance** (reviewer's adopted wording, recipe-taxonomy.md):")
-        st.markdown(
-            "> *'Substring grading on this corpus is biased toward "
-            "Qwen-family fine-tunes due to gold-token format-match. "
-            "Under semantic regrade, only the ceiling-reasoning gate "
-            "produces consistent lifts (Gemma 9B at 6/6 still "
-            "lifts; Qwen 14B at 3/6 still lifts but smaller; Qwen "
-            "7B at 6/6 reverses to regression). Customers running "
-            "this recipe on their own corpus should expect "
-            "substring lifts on family-matched FTs to be partially "
-            "or fully format-fidelity artifact, and should "
-            "semantic-grade by default.'*"
-        )
-        st.markdown("**Standing methodology** — durable, transfers across corpora:")
-        st.markdown(
-            "> *'Substring grading is reliable for base-vs-base "
-            "comparisons but unreliable for FT-vs-base comparisons "
-            "when the corpus phrasings come from one model family. "
-            "Customers running cross-family campaigns should "
-            "validate substring with semantic grading before "
-            "drawing FT-lift conclusions.'*"
-        )
-        st.markdown(
-            "**Production decision unaffected.** The Skippy 7B v4 "
-            "ship decision is anchored on the **three-gate framework** "
-            "(capability + voice + safety) — substring was never the "
-            "load-bearing signal. Voice and safety carried the real "
-            "signal; substring failed silently. This is exactly the "
-            "scenario the three-gate framework was designed for."
-        )
-
-        # Methodology-version footnote — mirrors keyhole-sizer 7c58b59.
-        # Reads the label stamped into sizer/sizer_bundle.json's meta
-        # block (re-vendored as commit be1a2f4 from [docs]'s
-        # personal-ai-framework 05b79d0). One-field-read answer to
-        # "are these anchors from the substring-headline era or the
-        # semantic-headline era?" — no git archaeology required.
-        _mv = get_bundle_summary()["bundle_meta"].get(
-            "methodology_version", "unstamped"
-        )
-        st.caption(
-            f"📐 Eval methodology snapshot: `{_mv}` "
-            "(stamped in `sizer_bundle.json` meta; cross-app lockstep "
-            "with keyhole-sizer + personal-ai-framework)."
-        )
-
-        st.markdown(
-            "---\n"
-            "**Why this matters for sizing:** model choice on the same "
-            "Q4_K_M MoE 30B/3B-active architecture is a pure quality-vs-quality "
-            "trade — decode tok/s is identical across same-arch entries (BW-bound "
-            "physics doesn't care which weights are in the file). The "
-            "**dense entry** has a different architecture (Qwen 2.5 14B), "
-            "so its perf differs: 5× more bytes per decoded token → "
-            "~5× lower tok/s at the same tier. Cost trade, not capability."
-        )
-
-
 # Phase 2 hot-swap helper — when a real measured silicon anchor exists for
 # the current (tier, model) cell, override decode_tok_s with the measured
 # value and upgrade the source state to "measured_silicon_anchor" (🟢).
@@ -1039,6 +797,252 @@ c4.metric(
     ),
 )
 
+
+# ── Accuracy details ──
+# Originally moved out of the sidebar 2026-05-11 (dd17baa parity);
+# 2026-05-15 repositioned directly below the 4 headline tiles per
+# Kyle. The accuracy story (catalog comparison + Finding 4
+# methodology surface) belongs adjacent to the perf headline, not
+# above it — the user wants "here's the perf, here's the accuracy
+# that goes with it" reading flow.
+if "pass_rate" in _selected_model and not _selected_model.get("perf_reference_only"):
+    with st.expander("📊 Accuracy details"):
+        st.markdown(f"🔸 *{_selected_model['accuracy_bullet']}*")
+        st.markdown("---")
+        st.markdown("**Catalog comparison** (all selectable models, Skippy v2+RAG):")
+        _catalog_rows: list[dict] = []
+        for _k, _m in MODELS.items():
+            if "pass_rate" not in _m:
+                continue
+            _row_delta = (_m["pass_rate"] - _production_model["pass_rate"]) * 100.0
+            _row_delta_str = (
+                "—  (reference)" if _k == PRODUCTION_REFERENCE_KEY
+                else f"{('+' if _row_delta >= 0 else '')}{_row_delta:.1f}pp"
+            )
+            _row_label = ("➤ " + _m["display_name"]) if _k == model_key else _m["display_name"]
+            _catalog_rows.append({
+                "Model":            _row_label,
+                "Base":             _m.get("base_model", "—"),
+                "Pass rate":        f"{_m['pass_rate']*100:.1f}%",
+                "Δ vs production":  _row_delta_str,
+                "n":                f"{_m['pass_n_passes']}/{_m['pass_n_total']}",
+                "Training":         _m.get("training", "—"),
+            })
+        st.dataframe(pd.DataFrame(_catalog_rows), width="stretch", hide_index=True)
+        # Sister-model confound caveat per [docs] 2026-05-05 09:45
+        # base-identity audit: the "Δ vs production" column compares
+        # rows with potentially different base models. Skippy MoE FT
+        # was trained on Qwen3-30B-A3B-Instruct-2507; the Thinking-2507
+        # row is its sister model (different base, not a fine-tune-vs-
+        # base measurement). Apples-to-apples fine-tune gain anchors
+        # are the dense Qwen 2.5 fine-tunes (validated +3.1pp / +5.3pp
+        # vs respective Instruct bases on 7B / 14B).
+        st.caption(
+            "**Read the Base column carefully.** Δ values between rows "
+            "with different bases mix two factors: (a) base architecture "
+            "differences and (b) training differences. The Δ between "
+            "the Skippy MoE FT row (Instruct-2507 base) and the "
+            "Thinking-2507 stock row is a *sister-model* comparison — "
+            "not a fine-tune-vs-base measurement. Apples-to-apples "
+            "fine-tune gains are validated on dense Qwen 2.5 (7B v4 "
+            "+3.1pp, 14B v4 +5.3pp vs respective Instruct bases). "
+            "MoE-base validation pending an MoE-aware LoRA recipe."
+        )
+
+        # Per-category breakdown rendering — handles two schemas:
+        # (a) dict-of-dicts (Tier 3 schema, 2026-05-07): each entry
+        #     is {"pass": N, "n": total, "rate": fraction}. Renders
+        #     raw counts + Δ vs production where production also has
+        #     dict-of-dicts data. This is the preferred shape going
+        #     forward.
+        # (b) signed-int (legacy): each entry is a signed delta vs
+        #     OLD production reference. Renders as before. Surviving
+        #     legacy entries are flagged as awaiting migration.
+        _cat_deltas = _selected_model.get("category_deltas") or {}
+        _has_rich = any(isinstance(v, dict) for v in _cat_deltas.values())
+        _has_legacy_int = any(isinstance(v, (int, float))
+                               for v in _cat_deltas.values())
+
+        if _has_rich:
+            # Dict-of-dicts. Show this model's raw counts + Δ vs
+            # production where production has matching data.
+            _ref_short = _production_model["display_name"].split(" (")[0]
+            _prod_cats = _production_model.get("category_deltas") or {}
+            _prod_has_rich = any(isinstance(v, dict)
+                                  for v in _prod_cats.values())
+            if _prod_has_rich:
+                st.markdown(
+                    f"**Per-category breakdown** (raw rates; Δ vs "
+                    f"production = {_ref_short}):"
+                )
+            else:
+                st.markdown(
+                    "**Per-category breakdown** (raw rates; production "
+                    "ref is missing per-category data — Δ unavailable):"
+                )
+            for cat, cat_data in _cat_deltas.items():
+                cat_label = CATEGORY_LABELS.get(cat, cat)
+                p, n = cat_data["pass"], cat_data["n"]
+                rate_pct = cat_data["rate"] * 100.0
+                line = (f"- {cat_label}: **{p}/{n}** "
+                        f"({rate_pct:.1f}%)")
+                prod_cat = _prod_cats.get(cat)
+                if isinstance(prod_cat, dict):
+                    d_passes = p - prod_cat["pass"]
+                    sign = "+" if d_passes >= 0 else ""
+                    line += f" — Δ vs prod: **{sign}{d_passes} passes**"
+                st.markdown(line)
+            st.caption(
+                "Per-category data from [docs] eval JSONs (132-sample "
+                "v2-RAG, RAG on, deterministic temp=0). Δ vs production "
+                "computed at render time from raw counts."
+            )
+        elif _has_legacy_int:
+            # Legacy signed-int delta-vs-production schema.
+            _ref_short = _production_model["display_name"].split(" (")[0]
+            st.markdown(
+                f"**Per-category Δ vs production** ({_ref_short}, "
+                f"positive = this model wins):"
+            )
+            for cat, dp in _cat_deltas.items():
+                cat_label = CATEGORY_LABELS.get(cat, cat)
+                sign = "+" if dp >= 0 else ""
+                st.markdown(f"- {cat_label}: **{sign}{dp} passes**")
+            st.caption(
+                "⚠️ Legacy schema (signed-int delta). Awaiting migration "
+                "to dict-of-dicts raw rates. Categories not listed are "
+                "flat ±0 vs the original production reference."
+            )
+        elif _is_production:
+            st.caption(
+                "Production reference — per-category Δ is zero against "
+                "itself. Switch the selector above to see breakdowns "
+                "for the alternative entries."
+            )
+        else:
+            # Entry has empty category_deltas — pending [docs] data
+            st.caption(
+                "Per-category breakdown not yet populated for this "
+                "entry. (Awaiting eval-side per-category data from "
+                "[docs] for older catalog entries.)"
+            )
+
+        # Eval methodology section — per [docs] 2026-05-11 09:31
+        # white paper Finding 4 closure (semantic-regrade campaign:
+        # 33 catalog entries regraded via GPT-4o binary semantic
+        # judge; substring shown to be Qwen-family-biased). Reviewer's
+        # framing: 'the Qwen-family format bias finding is, in my
+        # read, the single most valuable methodology output of this
+        # entire campaign — more valuable than gotcha #7, more
+        # valuable than the two-factor model'.
+        st.markdown("---")
+        st.markdown("**📐 Eval methodology — Finding 4: Qwen-family format bias (semantic regrade)**")
+        st.markdown(
+            "The headline pass-rate numbers above now use **semantic "
+            "grading** (GPT-4o binary semantic judge, 132-sample "
+            "v2-RAG, deterministic temp=0) per [docs] 2026-05-11 "
+            "white paper Finding 4. Substring grading is retained "
+            "only for the 2 entries where _semantic.json was not "
+            "produced (qwen3-30b-a3b-q4-moe, qwen2.5-14b-q4-dense — "
+            "both flagged in their accuracy_bullet)."
+        )
+        st.markdown("**Why the headline switched** — the production model's substring-headline-lift eroded across five successive cross-checks:")
+        st.markdown(
+            "| # | Cross-check | Result |\n"
+            "|---|---|---|\n"
+            "| 1 | Substring (original headline) | **+3.1pp** vs base |\n"
+            "| 2 | LLM-judge (Sonnet 4.6) | **−0.35** |\n"
+            "| 3 | Temperature=0.3 substring | **−29.3pp** |\n"
+            "| 4 | Cross-judge (GPT-4o) | **−0.69** |\n"
+            "| 5 | **Semantic regrade** (132-sample binary) | **−4.6pp** (sign reversal) |"
+        )
+        st.markdown(
+            "**Finding 4 (verbatim, [docs] 2026-05-11 white paper):** "
+            "*'The recipe's value is voice transfer and safety "
+            "calibration, not capability lift; the substring-headline-"
+            "capability gain on this corpus was a format-fidelity "
+            "artifact specific to Qwen-shaped phrasings in the "
+            "training data.'*"
+        )
+        st.markdown("**Substring is biased — per-family regrade Δ** (33-entry catalog, semantic minus substring):")
+        st.markdown(
+            "| Family | Regrade Δ direction | Interpretation |\n"
+            "|---|---|---|\n"
+            "| Qwen-family fine-tunes | **−3.2 to −12.7pp** | Substring over-graded (gold tokens are Qwen-shaped) |\n"
+            "| Non-Qwen stock bases (Gemma/Llama/Mistral) | **+1.6 to +6.0pp** | Substring under-graded |\n"
+            "| Gemma 9B v4 (cross-family) | +5.4pp | Only cross-family FT that lifts under both graders |\n"
+            "| Mistral/Llama/Yi v4 | flat-to-down | Substring direction confirmed |"
+        )
+        st.markdown("**Two-factor model — partially falsified by semantic regrade:**")
+        st.markdown(
+            "> Original (substring): *'Lift requires either ceiling "
+            "stock reasoning (6/6) OR family-match.'*  \n"
+            "> Refined (semantic): *'Substring lift requires either "
+            "ceiling reasoning OR family-match. Semantic lift "
+            "requires either ceiling reasoning OR Qwen-14B "
+            "specifically. The production 7B v4 lifts on substring "
+            "but not on semantic — its apparent capability gain "
+            "was largely format-fidelity matching trained Qwen "
+            "phrasings.'*"
+        )
+        st.markdown("**Customer guidance** (reviewer's adopted wording, recipe-taxonomy.md):")
+        st.markdown(
+            "> *'Substring grading on this corpus is biased toward "
+            "Qwen-family fine-tunes due to gold-token format-match. "
+            "Under semantic regrade, only the ceiling-reasoning gate "
+            "produces consistent lifts (Gemma 9B at 6/6 still "
+            "lifts; Qwen 14B at 3/6 still lifts but smaller; Qwen "
+            "7B at 6/6 reverses to regression). Customers running "
+            "this recipe on their own corpus should expect "
+            "substring lifts on family-matched FTs to be partially "
+            "or fully format-fidelity artifact, and should "
+            "semantic-grade by default.'*"
+        )
+        st.markdown("**Standing methodology** — durable, transfers across corpora:")
+        st.markdown(
+            "> *'Substring grading is reliable for base-vs-base "
+            "comparisons but unreliable for FT-vs-base comparisons "
+            "when the corpus phrasings come from one model family. "
+            "Customers running cross-family campaigns should "
+            "validate substring with semantic grading before "
+            "drawing FT-lift conclusions.'*"
+        )
+        st.markdown(
+            "**Production decision unaffected.** The Skippy 7B v4 "
+            "ship decision is anchored on the **three-gate framework** "
+            "(capability + voice + safety) — substring was never the "
+            "load-bearing signal. Voice and safety carried the real "
+            "signal; substring failed silently. This is exactly the "
+            "scenario the three-gate framework was designed for."
+        )
+
+        # Methodology-version footnote — mirrors keyhole-sizer 7c58b59.
+        # Reads the label stamped into sizer/sizer_bundle.json's meta
+        # block (re-vendored as commit be1a2f4 from [docs]'s
+        # personal-ai-framework 05b79d0). One-field-read answer to
+        # "are these anchors from the substring-headline era or the
+        # semantic-headline era?" — no git archaeology required.
+        _mv = get_bundle_summary()["bundle_meta"].get(
+            "methodology_version", "unstamped"
+        )
+        st.caption(
+            f"📐 Eval methodology snapshot: `{_mv}` "
+            "(stamped in `sizer_bundle.json` meta; cross-app lockstep "
+            "with keyhole-sizer + personal-ai-framework)."
+        )
+
+        st.markdown(
+            "---\n"
+            "**Why this matters for sizing:** model choice on the same "
+            "Q4_K_M MoE 30B/3B-active architecture is a pure quality-vs-quality "
+            "trade — decode tok/s is identical across same-arch entries (BW-bound "
+            "physics doesn't care which weights are in the file). The "
+            "**dense entry** has a different architecture (Qwen 2.5 14B), "
+            "so its perf differs: 5× more bytes per decoded token → "
+            "~5× lower tok/s at the same tier. Cost trade, not capability."
+        )
+
+
 st.markdown("---")
 
 
@@ -1239,6 +1243,538 @@ with st.expander("📡 Measured silicon anchors (private)", expanded=False):
         "for the cell's actual state). Cells without measurements fall "
         "back to RTX 5090 BW-projection."
     )
+
+
+st.markdown("---")
+
+# Per-stage breakdown bar chart
+stage_ms = {
+    "Host (retrieval + agent)": r["host_ms"],
+    "Prefill": r["prefill_s"] * 1000,
+    "Decode": r["decode_s"] * 1000,
+}
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=list(stage_ms.keys()),
+    y=list(stage_ms.values()),
+    text=[f"{v:,.0f} ms" for v in stage_ms.values()],
+    textposition="outside",
+    marker_color=["#6b7280", "#3b82f6", "#10b981"],
+))
+import math
+_ymax = max(stage_ms.values())
+fig.update_layout(
+    title=f"Per-stage time — {MODELS[model_key]['display_name']} / {tier_name}",
+    yaxis_title="Milliseconds (log)",
+    yaxis_type="log",
+    # Log-scale range: from 1ms to 1 decade above the tallest bar, so the
+    # "outside" text labels don't clip against the top edge.
+    yaxis=dict(gridcolor="#374151",
+               range=[0, math.log10(max(_ymax, 10)) + 0.6]),
+    height=420,
+    margin=dict(t=60, b=40, l=40, r=20),
+    plot_bgcolor="#1f2937",
+    paper_bgcolor="#111827",
+    font=dict(color="#f3f4f6"),
+    xaxis=dict(showgrid=False),
+)
+st.plotly_chart(fig, width="stretch")
+
+
+# ───────────────────────── Decode-vs-context curve ─────────────────────────
+# Decode throughput is not a constant per model — it falls as context grows
+# because per-step attention traffic scales with sequence length. This chart
+# shows the interpolated curve across standard context lengths on the
+# selected tier, with the measured 5090 anchor points called out.
+
+st.subheader("Decode tok/s vs context length")
+st.caption(
+    f"How decode throughput scales with prompt/context length on **{hw.name}**. "
+    f"Solid line = interpolated between measured 5090 calibration points "
+    f"(dots); dashed region = extrapolated beyond measured range "
+    f"(calibration ceiling = 12.7K tokens today). For non-5090 tiers, the "
+    f"whole curve is BW-scaled by {hw.effective_bandwidth_gbs / 1523.2:.3f}× "
+    f"(hw effective BW / 5090 effective BW). "
+    f"Compiler quality {compiler_quality:.2f} applies to projected tiers."
+)
+
+# Standard log-spaced context lengths to evaluate
+_CTX_GRID = [100, 200, 400, 700, 1000, 2000, 4000, 7000, 10000, 13000,
+             16000, 24000, 32000]
+
+# Build curves for BOTH models on the selected tier (so users can compare
+# MoE vs dense context-scaling on their silicon of interest)
+_curve_fig = go.Figure()
+_model_colors = {
+    "qwen2.5-14b-q4-dense": "#60a5fa",   # blue
+    "qwen3-30b-a3b-q4-moe": "#34d399",   # green
+}
+
+_max_measured_ctx_any = 0  # for the extrapolation shading
+for mk in MODELS.keys():
+    try:
+        anchors = calibration_anchors(mk)
+    except Exception:
+        continue
+    if not anchors:
+        continue
+
+    max_measured = max(a[0] for a in anchors)
+    _max_measured_ctx_any = max(_max_measured_ctx_any, max_measured)
+
+    # Curve line (solid within measured range, dashed beyond)
+    xs_in, ys_in = [], []
+    xs_out, ys_out = [], []
+    for ctx in _CTX_GRID:
+        r = decode_tok_s_at_context(mk, hw, ctx,
+                                     compiler_quality=compiler_quality,
+                                     npu_share=npu_share)
+        if ctx <= max_measured:
+            xs_in.append(ctx)
+            ys_in.append(r["decode_tok_s"])
+        else:
+            if not xs_out:  # start the dashed line at the last measured pt
+                xs_out.append(max_measured)
+                last_r = decode_tok_s_at_context(mk, hw, max_measured,
+                                                  compiler_quality=compiler_quality,
+                                                  npu_share=npu_share)
+                ys_out.append(last_r["decode_tok_s"])
+            xs_out.append(ctx)
+            ys_out.append(r["decode_tok_s"])
+
+    color = _model_colors.get(mk, "#f59e0b")
+    display = MODELS[mk]["display_name"]
+
+    # In-range (solid)
+    _curve_fig.add_trace(go.Scatter(
+        x=xs_in, y=ys_in, mode="lines", name=display,
+        line=dict(color=color, width=2.5),
+        hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s<extra></extra>",
+    ))
+    # Extrapolated (dashed)
+    if xs_out:
+        _curve_fig.add_trace(go.Scatter(
+            x=xs_out, y=ys_out, mode="lines",
+            name=f"{display} (extrapolated)",
+            line=dict(color=color, width=2.0, dash="dash"),
+            showlegend=False,
+            hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s (extrapolated)<extra></extra>",
+        ))
+
+    # Measured anchor dots — scaled to the selected tier
+    ax_xs = [a[0] for a in anchors]
+    ax_ys = []
+    ax_labels = []
+    for pt, ts_5090, wl in anchors:
+        r = decode_tok_s_at_context(mk, hw, pt,
+                                     compiler_quality=compiler_quality,
+                                     npu_share=npu_share)
+        ax_ys.append(r["decode_tok_s"])
+        ax_labels.append(wl)
+    _curve_fig.add_trace(go.Scatter(
+        x=ax_xs, y=ax_ys, mode="markers",
+        name=f"{display} — measured anchors",
+        marker=dict(color=color, size=9,
+                    line=dict(color="#ffffff", width=1.5)),
+        hovertext=ax_labels, hoverinfo="text+x+y",
+        showlegend=False,
+    ))
+
+# Extrapolation zone shading
+if _max_measured_ctx_any > 0:
+    _curve_fig.add_vrect(
+        x0=_max_measured_ctx_any, x1=_CTX_GRID[-1],
+        fillcolor="#6b7280", opacity=0.10, line_width=0,
+        annotation_text="extrapolated — run bake-offs at longer contexts to fill",
+        annotation_position="top right",
+        annotation=dict(font=dict(size=11, color="#9ca3af")),
+    )
+
+_curve_fig.update_layout(
+    title=f"Decode throughput vs context length on {hw.name}",
+    xaxis=dict(title="Context length (tokens)", type="log",
+               gridcolor="#374151"),
+    yaxis=dict(title="Decode tok/s", gridcolor="#374151",
+               rangemode="tozero"),
+    height=420,
+    margin=dict(t=60, b=40, l=50, r=20),
+    plot_bgcolor="#1f2937",
+    paper_bgcolor="#111827",
+    font=dict(color="#f3f4f6"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                xanchor="right", x=1),
+)
+st.plotly_chart(_curve_fig, width="stretch")
+
+# ─── What-if model projection card ───
+# Populated from the sidebar expander. Shown only when the user enables
+# it so we don't clutter the default view.
+if st.session_state.get("k_whatif_enable"):
+    st.markdown("---")
+    st.subheader(f"What-if: **{_whatif_name}** on {hw.name}")
+
+    _whatif_active_params = int(_whatif_active_b * 1e9)
+    _whatif_total_params = int(_whatif_total_b * 1e9)
+
+    # Project decode tok/s at the current workload's context length
+    _wi = project_what_if_decode_tok_s(
+        active_params=_whatif_active_params,
+        bytes_per_param=_whatif_bpp,
+        is_moe=_whatif_is_moe,
+        hw=hw,
+        ctx_tokens=prompt_tokens,
+        compiler_quality=compiler_quality,
+        npu_share=npu_share,
+    )
+    # Memory feasibility at prompt+decode total context
+    _wm = what_if_memory_feasibility(
+        total_params=_whatif_total_params,
+        bytes_per_param=_whatif_bpp,
+        hw=hw,
+        context_tokens=prompt_tokens + decode_tokens,
+        hidden_dim=int(_whatif_hidden),
+        num_layers=int(_whatif_layers),
+    )
+
+    _wc_a, _wc_b, _wc_c, _wc_d = st.columns(4)
+    _wc_a.metric("Decode tok/s", f"{_wi['decode_tok_s']:.1f}",
+                 delta=f"{_wi['speedup_vs_current_skippy']:.2f}× vs current Skippy")
+    _wc_b.metric("Bytes/token decode",
+                 f"{_wi['bytes_per_token']/1e9:.2f} GB",
+                 delta=f"{_wi['anchor_bytes_per_token']/_wi['bytes_per_token']:.2f}× vs {_wi['anchor_display_name'].split(' ')[0]} anchor",
+                 delta_color="normal")
+    _wc_c.metric("VRAM required",
+                 f"{_wm['required_gb']:.1f} GB",
+                 delta=f"{_wm['headroom_gb']:+.1f} GB headroom",
+                 delta_color="normal")
+    _wc_d.metric("Feasibility", _wm['verdict'].replace("_", " "))
+
+    # Fit/tight/won't-fit banner
+    if _wm['verdict'] == "wont_fit":
+        st.error(
+            f"🔴 **Won't fit** on {hw.name} at {prompt_tokens + decode_tokens:,} "
+            f"token context. Weights = {_wm['breakdown']['weights_gb']} GB + "
+            f"KV = {_wm['breakdown']['kv_cache_gb']} GB + "
+            f"overhead = {_wm['breakdown']['overhead_gb']} GB = "
+            f"{_wm['required_gb']} GB, only {_wm['available_gb']} GB available. "
+            f"Drop context length, use a smaller quant, or move up a tier."
+        )
+    elif _wm['verdict'] == "tight":
+        st.warning(
+            f"🟡 **Tight fit** — {_wm['headroom_gb']} GB headroom (<15% of "
+            f"{_wm['available_gb']} GB). Any runtime overhead growth risks OOM."
+        )
+    else:
+        st.success(
+            f"🟢 **Fits comfortably** — {_wm['headroom_gb']} GB headroom on "
+            f"{hw.name} at {prompt_tokens + decode_tokens:,} token context."
+        )
+
+    # Honest summary of the projection
+    _speedup_vs_skippy = _wi['speedup_vs_current_skippy']
+    if _speedup_vs_skippy > 1.2:
+        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                    f"faster decode** than current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s) at this context. "
+                    f"Worth bake-offing to verify projected quality.")
+    elif _speedup_vs_skippy < 0.8:
+        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
+                    f"the decode** of current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s). Quality advantage "
+                    f"would need to justify the slowdown.")
+    else:
+        _verdict = (f"**{_whatif_name}** projects **similar decode** to "
+                    f"current Skippy ({_wi['current_skippy_tok_s']:.1f} "
+                    f"→ {_wi['decode_tok_s']:.1f} tok/s, "
+                    f"{_speedup_vs_skippy:.2f}×). Net change depends on "
+                    f"quality delta, not speed.")
+    st.info(_verdict)
+
+    with st.expander("How this projection is computed", expanded=False):
+        st.markdown(f"""
+**Anchor model:** {_wi['anchor_display_name']} (architecture-class match)
+
+**Decode scaling law:** decode tok/s is roughly inversely proportional
+to active bytes per decoded token when BW-bound.
+
+- Anchor active bytes/token: {_wi['anchor_bytes_per_token']/1e9:.2f} GB
+  ({MODELS[_wi['anchor_model']]['active_params']/1e9:.1f}B active × {MODELS[_wi['anchor_model']]['bytes_per_param']:.2f} bytes/param)
+- What-if active bytes/token: {_wi['bytes_per_token']/1e9:.2f} GB
+  ({_whatif_active_b:.1f}B active × {_whatif_bpp:.2f} bytes/param)
+- Scaling factor: {_wi['speedup_vs_anchor']:.2f}× (anchor bytes / what-if bytes)
+
+**Projection math:** anchor decode tok/s at {prompt_tokens:,} context
+(interpolated from the 5 measured anchors) × scaling factor = what-if
+projection. This bakes in the same architecture-specific efficiency
+factors (MoE routing overhead, small-matmul inefficiency) the anchor
+model exhibits, so we don't need a separate efficiency constant.
+
+**What this misses:**
+- Per-layer attention shape differences (KV head ratio, head count)
+- Instruction-following / RAG-grounding quality — which is often the
+  actual reason to swap models. Quality requires a real eval run.
+- Runtime-specific optimizations (some models are better-supported in
+  llama-cpp / vLLM than others — real perf can differ from BW-bound
+  projection by ±20%)
+
+**How to validate this projection:** download the candidate model's
+Q4_K_M GGUF, run `eval/run_sizer_bakeoffs.py` against a Skippy instance
+serving it, regenerate `sizer_bundle.json`. The new anchors slot
+directly into the calibration curve.
+""")
+
+    st.markdown("---")
+
+with st.expander("Methodology — how this curve is built", expanded=False):
+    st.markdown(f"""
+**5 calibration anchors per model on RTX 5090** (from Skippy's measured
+bake-offs at `eval/run_sizer_bakeoffs.py`):
+
+| Model | Anchor points (prompt tokens → decode tok/s) |
+|---|---|
+""")
+    for mk in MODELS.keys():
+        try:
+            anchors = calibration_anchors(mk)
+        except Exception:
+            continue
+        display = MODELS[mk]["display_name"]
+        pts = "  •  ".join(f"{pt:,} → {ts:.1f}" for pt, ts, _ in anchors)
+        st.markdown(f"| {display} | {pts} |")
+    st.markdown(f"""
+**Interpolation:** log-linear on the context axis between adjacent anchors.
+Context length matters more logarithmically than linearly — a 2x context
+increase from 4K→8K hurts decode more than 40K→80K, which is why the
+x-axis is log-scaled above.
+
+**Extrapolation:** clamped to the last anchor's tok/s value (so we don't
+overstate the collapse). Run bake-offs at 16K/24K/32K/64K prompt
+lengths to fill in the right side of the curve.
+
+**BW scaling to other tiers:** decode is bandwidth-bound — tok/s on a
+projected tier = (5090 interpolated tok/s) × (tier effective BW /
+5090 effective BW) × compiler_quality. For the currently selected tier
+({hw.name}), that multiplier is {hw.effective_bandwidth_gbs / 1523.2:.3f}×.
+
+**What this improves vs the prior single-point model:** project_llm's
+BW projection formerly grabbed whichever workload's tok/s was labeled
+for the user's choice. With the curve, we interpolate to the actual
+prompt_tokens the user specified. For mid-range contexts (1K-10K) this
+is materially more accurate than clamping to the nearest workload anchor.
+""")
+
+st.markdown("---")
+
+
+# Cross-tier comparison table
+
+# ───────────────────────── KPI tables ─────────────────────────
+# Mirror of keyhole-sizer's KPI section. The cross-tier + cross-model
+# tables ARE the KPIs — per Kyle 2026-05-15 — so brand them as such
+# with a unified section header and a short orientation caption.
+st.header("📊 KPIs")
+st.caption(
+    "Two performance KPI views: (a) **this model across all NPU tiers** to size the silicon to a target deployment, and "
+    "(b) **all selectable models on this tier** to compare options within a fixed silicon budget. Download both as XLSX below."
+)
+
+st.subheader("Cross-tier comparison")
+st.caption(
+    f"All tiers projected from RTX 5090's measured baseline for "
+    f"**{MODELS[model_key]['display_name']}** at "
+    f"**{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
+    "Lower tier → more bandwidth-bound → slower decode. "
+    "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
+    "(uniform `bandwidth_efficiency` across tiers). "
+    "Src (Phase 2 projection-source classification): 🟢 measured "
+    "(direct silicon measurement — 5090 cell or tier-level Skippy "
+    "anchor) · 🟡 same-class projection (BW-scaled within tier_family "
+    "from a measured anchor; covers memory-upgrade overlays and "
+    "BW-equal sibling tiers) · 🟠 cross-class extrapolation (two-floor "
+    "MAX(BW, compute) physics — no anchor in tier_family yet) · 🔴 "
+    "won't fit / dtype mismatch · ⚠️ tight memory headroom suffix."
+)
+rows = []
+for stock_tname, stock_thw in TIERS.items():
+    # If the user has toggled an LPDDR6 memory upgrade, swap the
+    # upgraded variant in for THAT tier's row only — surfaces the
+    # upgraded BW / DDR type / decode tok/s and tags the Tier label
+    # with the variant suffix (e.g. "NPU Mid (LPDDR6-12)"). Other
+    # rows stay at their stock memory.
+    if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
+        tname, thw = hw.name, hw
+    else:
+        tname, thw = stock_tname, stock_thw
+
+    # DDR type + Total/Usable BW columns — pull straight from Hardware
+    # fields. Compact format to keep the table from widening:
+    # "128b LPDDR5X @ 8.4 GT/s" / "134.4 / 94.1"
+    ddr_type = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
+                f"{thw.mem_data_rate_gtps:g} GT/s")
+    bw_str = (f"{thw.mem_bandwidth_gbs:.1f} / "
+              f"{thw.effective_bandwidth_gbs:.1f}")
+
+    try:
+        rr = project_llm(
+            model_key, thw, workload_id,
+            prompt_tokens=prompt_tokens,
+            decode_tokens=decode_tokens,
+            compiler_quality=compiler_quality,
+            npu_share=npu_share,
+        )
+        if rr["source"] == "wont_fit":
+            f = rr["feasibility"]
+            rows.append({
+                "Tier": tname, "Src": "🔴",
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                "Host": f"won't fit · needs {f['required_gb']} GB "
+                        f"(has {f['available_gb']})",
+            })
+            continue
+        if rr["source"] == "dtype_mismatch":
+            d = rr["dtype_detail"]
+            rows.append({
+                "Tier": tname, "Src": "🔴",
+                "DDR type": ddr_type, "Total/Usable BW": bw_str,
+                "Decode": "—", "Prefill": "—", "Total (s)": "—",
+                "Host": (f"dtype · needs {d['model_needs']} "
+                         f"(has {'/'.join(d['hw_supports'])})"),
+            })
+            continue
+        # Pick Src icon by Phase 2 source classification:
+        # 🟢 measured (direct cell or anchored on this tier)
+        # 🟡 same_class_anchor (BW-scaled within family — memory-upgrade
+        #    overlays and BW-equal sibling tiers both land here)
+        # 🟠 cross_class (two-floor MAX physics, no anchor in family)
+        # ⚠️ suffix for tight memory headroom.
+        _src_icon_by_class = {
+            "measured": "🟢",
+            "measured_anchor": "🟢",
+            "same_class_anchor": "🟡",
+            "cross_class": "🟠",
+        }
+        src_icon = _src_icon_by_class.get(rr["source"], "⚪")
+        if rr["feasibility"]["verdict"] == "tight":
+            src_icon = src_icon + "⚠️"
+        rows.append({
+            "Tier": tname, "Src": src_icon,
+            "DDR type": ddr_type, "Total/Usable BW": bw_str,
+            # Stringify all numeric values: the wont_fit / dtype_mismatch
+            # branches above use "—" sentinels which collide with floats
+            # under pandas object-dtype + pyarrow serialization (Streamlit
+            # 1.56's st.dataframe → pa.Table.from_pandas raises
+            # ArrowTypeError 'Expected bytes, got a float object').
+            "Decode":   f"{rr['decode_tok_s']:.1f}",
+            "Prefill":  f"{round(rr['prefill_tok_s'])}",
+            "Total (s)": f"{rr['total_s']:.2f}",
+            "Host":     (f"{rr['host_ms']:.0f}"
+                         if isinstance(rr['host_ms'], (int, float))
+                         else str(rr['host_ms'])),
+        })
+    except ValueError:
+        # Pad missing columns with "—" so pandas doesn't fill them with
+        # NaN (float) — same mixed-type-collision risk.
+        rows.append({
+            "Tier": tname, "Src": "⚪",
+            "DDR type": ddr_type, "Total/Usable BW": bw_str,
+            "Decode": "—", "Prefill": "—",
+            "Total (s)": "—", "Host": "—",
+        })
+df = pd.DataFrame(rows)
+st.dataframe(df, width="stretch", hide_index=True)
+
+
+# Cross-model comparison on this tier
+st.subheader("Cross-model comparison (on this tier)")
+st.caption("MoE's decode advantage comes from fewer active params per token — "
+           "dense 14B moves ~4.5× more weight bytes per decoded token than MoE 30B-A3B.")
+rows2 = []
+for mk in MODELS:
+    try:
+        rr = project_llm(
+            mk, hw, workload_id,
+            prompt_tokens=prompt_tokens,
+            decode_tokens=decode_tokens,
+            compiler_quality=compiler_quality,
+            npu_share=npu_share,
+        )
+        if rr["source"] == "wont_fit":
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                "Decode tok/s": "—",
+                "Total (s)": "—",
+                "Source": "🔴 won't fit",
+            })
+            continue
+        if rr["source"] == "dtype_mismatch":
+            rows2.append({
+                "Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+                "Decode tok/s": "—",
+                "Total (s)": "—",
+                "Source": "🔴 dtype mismatch",
+            })
+            continue
+        # Phase 2 4-state source classification (same scheme as cross-tier
+        # table): 🟢 measured/measured_anchor, 🟡 same_class_anchor,
+        # 🟠 cross_class, ⚠️ tight memory headroom suffix.
+        _src_label_by_class = {
+            "measured":          "🟢 measured",
+            "measured_anchor":   "🟢 measured anchor",
+            "same_class_anchor": "🟡 same-class",
+            "cross_class":       "🟠 cross-class",
+        }
+        _src_label = _src_label_by_class.get(rr["source"], "⚪ unknown")
+        if rr["feasibility"]["verdict"] == "tight":
+            _src_label = _src_label + " ⚠️"
+        rows2.append({
+            "Model": MODELS[mk]["display_name"],
+            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+            # Stringify numerics (same rationale as the cross-tier table
+            # above — pyarrow can't serialize a column that mixes "—"
+            # sentinels with floats under pandas object dtype).
+            "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
+            "Total (s)":    f"{rr['total_s']:.2f}",
+            "Source":       _src_label,
+        })
+    except ValueError:
+        # Same column-padding pattern — avoid NaN-vs-string mixing.
+        # Active params + Bytes/token decode are uniformly floats in
+        # the other branches (model metadata, not result-dependent),
+        # so keep them as floats here too.
+        rows2.append({
+            "Model": MODELS[mk]["display_name"],
+            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
+            "Decode tok/s": "—",
+            "Total (s)": "—",
+            "Source": "⚪ no data",
+        })
+df2 = pd.DataFrame(rows2)
+st.dataframe(df2, width="stretch", hide_index=True)
+
+
+# XLSX download
+st.markdown("---")
+buf = io.BytesIO()
+with pd.ExcelWriter(buf, engine="openpyxl") as xlw:
+    df.to_excel(xlw, sheet_name="cross_tier", index=False)
+    df2.to_excel(xlw, sheet_name="cross_model", index=False)
+st.download_button(
+    "⬇ Download projections (XLSX)",
+    data=buf.getvalue(),
+    file_name=f"skippy_sizer_{model_key}_{tier_name.replace(' ','_')}_{workload_id}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
 
 st.markdown("---")
@@ -1683,525 +2219,6 @@ with st.expander("Why this cost exists — the hidden silicon trade-off",
 A rigorous architecture decision needs both rows.
 """)
 
-st.markdown("---")
-
-# Per-stage breakdown bar chart
-stage_ms = {
-    "Host (retrieval + agent)": r["host_ms"],
-    "Prefill": r["prefill_s"] * 1000,
-    "Decode": r["decode_s"] * 1000,
-}
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=list(stage_ms.keys()),
-    y=list(stage_ms.values()),
-    text=[f"{v:,.0f} ms" for v in stage_ms.values()],
-    textposition="outside",
-    marker_color=["#6b7280", "#3b82f6", "#10b981"],
-))
-import math
-_ymax = max(stage_ms.values())
-fig.update_layout(
-    title=f"Per-stage time — {MODELS[model_key]['display_name']} / {tier_name}",
-    yaxis_title="Milliseconds (log)",
-    yaxis_type="log",
-    # Log-scale range: from 1ms to 1 decade above the tallest bar, so the
-    # "outside" text labels don't clip against the top edge.
-    yaxis=dict(gridcolor="#374151",
-               range=[0, math.log10(max(_ymax, 10)) + 0.6]),
-    height=420,
-    margin=dict(t=60, b=40, l=40, r=20),
-    plot_bgcolor="#1f2937",
-    paper_bgcolor="#111827",
-    font=dict(color="#f3f4f6"),
-    xaxis=dict(showgrid=False),
-)
-st.plotly_chart(fig, width="stretch")
-
-
-# ───────────────────────── Decode-vs-context curve ─────────────────────────
-# Decode throughput is not a constant per model — it falls as context grows
-# because per-step attention traffic scales with sequence length. This chart
-# shows the interpolated curve across standard context lengths on the
-# selected tier, with the measured 5090 anchor points called out.
-
-st.subheader("Decode tok/s vs context length")
-st.caption(
-    f"How decode throughput scales with prompt/context length on **{hw.name}**. "
-    f"Solid line = interpolated between measured 5090 calibration points "
-    f"(dots); dashed region = extrapolated beyond measured range "
-    f"(calibration ceiling = 12.7K tokens today). For non-5090 tiers, the "
-    f"whole curve is BW-scaled by {hw.effective_bandwidth_gbs / 1523.2:.3f}× "
-    f"(hw effective BW / 5090 effective BW). "
-    f"Compiler quality {compiler_quality:.2f} applies to projected tiers."
-)
-
-# Standard log-spaced context lengths to evaluate
-_CTX_GRID = [100, 200, 400, 700, 1000, 2000, 4000, 7000, 10000, 13000,
-             16000, 24000, 32000]
-
-# Build curves for BOTH models on the selected tier (so users can compare
-# MoE vs dense context-scaling on their silicon of interest)
-_curve_fig = go.Figure()
-_model_colors = {
-    "qwen2.5-14b-q4-dense": "#60a5fa",   # blue
-    "qwen3-30b-a3b-q4-moe": "#34d399",   # green
-}
-
-_max_measured_ctx_any = 0  # for the extrapolation shading
-for mk in MODELS.keys():
-    try:
-        anchors = calibration_anchors(mk)
-    except Exception:
-        continue
-    if not anchors:
-        continue
-
-    max_measured = max(a[0] for a in anchors)
-    _max_measured_ctx_any = max(_max_measured_ctx_any, max_measured)
-
-    # Curve line (solid within measured range, dashed beyond)
-    xs_in, ys_in = [], []
-    xs_out, ys_out = [], []
-    for ctx in _CTX_GRID:
-        r = decode_tok_s_at_context(mk, hw, ctx,
-                                     compiler_quality=compiler_quality,
-                                     npu_share=npu_share)
-        if ctx <= max_measured:
-            xs_in.append(ctx)
-            ys_in.append(r["decode_tok_s"])
-        else:
-            if not xs_out:  # start the dashed line at the last measured pt
-                xs_out.append(max_measured)
-                last_r = decode_tok_s_at_context(mk, hw, max_measured,
-                                                  compiler_quality=compiler_quality,
-                                                  npu_share=npu_share)
-                ys_out.append(last_r["decode_tok_s"])
-            xs_out.append(ctx)
-            ys_out.append(r["decode_tok_s"])
-
-    color = _model_colors.get(mk, "#f59e0b")
-    display = MODELS[mk]["display_name"]
-
-    # In-range (solid)
-    _curve_fig.add_trace(go.Scatter(
-        x=xs_in, y=ys_in, mode="lines", name=display,
-        line=dict(color=color, width=2.5),
-        hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s<extra></extra>",
-    ))
-    # Extrapolated (dashed)
-    if xs_out:
-        _curve_fig.add_trace(go.Scatter(
-            x=xs_out, y=ys_out, mode="lines",
-            name=f"{display} (extrapolated)",
-            line=dict(color=color, width=2.0, dash="dash"),
-            showlegend=False,
-            hovertemplate="%{x:,.0f} ctx → %{y:.1f} tok/s (extrapolated)<extra></extra>",
-        ))
-
-    # Measured anchor dots — scaled to the selected tier
-    ax_xs = [a[0] for a in anchors]
-    ax_ys = []
-    ax_labels = []
-    for pt, ts_5090, wl in anchors:
-        r = decode_tok_s_at_context(mk, hw, pt,
-                                     compiler_quality=compiler_quality,
-                                     npu_share=npu_share)
-        ax_ys.append(r["decode_tok_s"])
-        ax_labels.append(wl)
-    _curve_fig.add_trace(go.Scatter(
-        x=ax_xs, y=ax_ys, mode="markers",
-        name=f"{display} — measured anchors",
-        marker=dict(color=color, size=9,
-                    line=dict(color="#ffffff", width=1.5)),
-        hovertext=ax_labels, hoverinfo="text+x+y",
-        showlegend=False,
-    ))
-
-# Extrapolation zone shading
-if _max_measured_ctx_any > 0:
-    _curve_fig.add_vrect(
-        x0=_max_measured_ctx_any, x1=_CTX_GRID[-1],
-        fillcolor="#6b7280", opacity=0.10, line_width=0,
-        annotation_text="extrapolated — run bake-offs at longer contexts to fill",
-        annotation_position="top right",
-        annotation=dict(font=dict(size=11, color="#9ca3af")),
-    )
-
-_curve_fig.update_layout(
-    title=f"Decode throughput vs context length on {hw.name}",
-    xaxis=dict(title="Context length (tokens)", type="log",
-               gridcolor="#374151"),
-    yaxis=dict(title="Decode tok/s", gridcolor="#374151",
-               rangemode="tozero"),
-    height=420,
-    margin=dict(t=60, b=40, l=50, r=20),
-    plot_bgcolor="#1f2937",
-    paper_bgcolor="#111827",
-    font=dict(color="#f3f4f6"),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1),
-)
-st.plotly_chart(_curve_fig, width="stretch")
-
-# ─── What-if model projection card ───
-# Populated from the sidebar expander. Shown only when the user enables
-# it so we don't clutter the default view.
-if st.session_state.get("k_whatif_enable"):
-    st.markdown("---")
-    st.subheader(f"What-if: **{_whatif_name}** on {hw.name}")
-
-    _whatif_active_params = int(_whatif_active_b * 1e9)
-    _whatif_total_params = int(_whatif_total_b * 1e9)
-
-    # Project decode tok/s at the current workload's context length
-    _wi = project_what_if_decode_tok_s(
-        active_params=_whatif_active_params,
-        bytes_per_param=_whatif_bpp,
-        is_moe=_whatif_is_moe,
-        hw=hw,
-        ctx_tokens=prompt_tokens,
-        compiler_quality=compiler_quality,
-        npu_share=npu_share,
-    )
-    # Memory feasibility at prompt+decode total context
-    _wm = what_if_memory_feasibility(
-        total_params=_whatif_total_params,
-        bytes_per_param=_whatif_bpp,
-        hw=hw,
-        context_tokens=prompt_tokens + decode_tokens,
-        hidden_dim=int(_whatif_hidden),
-        num_layers=int(_whatif_layers),
-    )
-
-    _wc_a, _wc_b, _wc_c, _wc_d = st.columns(4)
-    _wc_a.metric("Decode tok/s", f"{_wi['decode_tok_s']:.1f}",
-                 delta=f"{_wi['speedup_vs_current_skippy']:.2f}× vs current Skippy")
-    _wc_b.metric("Bytes/token decode",
-                 f"{_wi['bytes_per_token']/1e9:.2f} GB",
-                 delta=f"{_wi['anchor_bytes_per_token']/_wi['bytes_per_token']:.2f}× vs {_wi['anchor_display_name'].split(' ')[0]} anchor",
-                 delta_color="normal")
-    _wc_c.metric("VRAM required",
-                 f"{_wm['required_gb']:.1f} GB",
-                 delta=f"{_wm['headroom_gb']:+.1f} GB headroom",
-                 delta_color="normal")
-    _wc_d.metric("Feasibility", _wm['verdict'].replace("_", " "))
-
-    # Fit/tight/won't-fit banner
-    if _wm['verdict'] == "wont_fit":
-        st.error(
-            f"🔴 **Won't fit** on {hw.name} at {prompt_tokens + decode_tokens:,} "
-            f"token context. Weights = {_wm['breakdown']['weights_gb']} GB + "
-            f"KV = {_wm['breakdown']['kv_cache_gb']} GB + "
-            f"overhead = {_wm['breakdown']['overhead_gb']} GB = "
-            f"{_wm['required_gb']} GB, only {_wm['available_gb']} GB available. "
-            f"Drop context length, use a smaller quant, or move up a tier."
-        )
-    elif _wm['verdict'] == "tight":
-        st.warning(
-            f"🟡 **Tight fit** — {_wm['headroom_gb']} GB headroom (<15% of "
-            f"{_wm['available_gb']} GB). Any runtime overhead growth risks OOM."
-        )
-    else:
-        st.success(
-            f"🟢 **Fits comfortably** — {_wm['headroom_gb']} GB headroom on "
-            f"{hw.name} at {prompt_tokens + decode_tokens:,} token context."
-        )
-
-    # Honest summary of the projection
-    _speedup_vs_skippy = _wi['speedup_vs_current_skippy']
-    if _speedup_vs_skippy > 1.2:
-        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
-                    f"faster decode** than current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s) at this context. "
-                    f"Worth bake-offing to verify projected quality.")
-    elif _speedup_vs_skippy < 0.8:
-        _verdict = (f"**{_whatif_name}** projects **{_speedup_vs_skippy:.2f}× "
-                    f"the decode** of current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s). Quality advantage "
-                    f"would need to justify the slowdown.")
-    else:
-        _verdict = (f"**{_whatif_name}** projects **similar decode** to "
-                    f"current Skippy ({_wi['current_skippy_tok_s']:.1f} "
-                    f"→ {_wi['decode_tok_s']:.1f} tok/s, "
-                    f"{_speedup_vs_skippy:.2f}×). Net change depends on "
-                    f"quality delta, not speed.")
-    st.info(_verdict)
-
-    with st.expander("How this projection is computed", expanded=False):
-        st.markdown(f"""
-**Anchor model:** {_wi['anchor_display_name']} (architecture-class match)
-
-**Decode scaling law:** decode tok/s is roughly inversely proportional
-to active bytes per decoded token when BW-bound.
-
-- Anchor active bytes/token: {_wi['anchor_bytes_per_token']/1e9:.2f} GB
-  ({MODELS[_wi['anchor_model']]['active_params']/1e9:.1f}B active × {MODELS[_wi['anchor_model']]['bytes_per_param']:.2f} bytes/param)
-- What-if active bytes/token: {_wi['bytes_per_token']/1e9:.2f} GB
-  ({_whatif_active_b:.1f}B active × {_whatif_bpp:.2f} bytes/param)
-- Scaling factor: {_wi['speedup_vs_anchor']:.2f}× (anchor bytes / what-if bytes)
-
-**Projection math:** anchor decode tok/s at {prompt_tokens:,} context
-(interpolated from the 5 measured anchors) × scaling factor = what-if
-projection. This bakes in the same architecture-specific efficiency
-factors (MoE routing overhead, small-matmul inefficiency) the anchor
-model exhibits, so we don't need a separate efficiency constant.
-
-**What this misses:**
-- Per-layer attention shape differences (KV head ratio, head count)
-- Instruction-following / RAG-grounding quality — which is often the
-  actual reason to swap models. Quality requires a real eval run.
-- Runtime-specific optimizations (some models are better-supported in
-  llama-cpp / vLLM than others — real perf can differ from BW-bound
-  projection by ±20%)
-
-**How to validate this projection:** download the candidate model's
-Q4_K_M GGUF, run `eval/run_sizer_bakeoffs.py` against a Skippy instance
-serving it, regenerate `sizer_bundle.json`. The new anchors slot
-directly into the calibration curve.
-""")
-
-    st.markdown("---")
-
-with st.expander("Methodology — how this curve is built", expanded=False):
-    st.markdown(f"""
-**5 calibration anchors per model on RTX 5090** (from Skippy's measured
-bake-offs at `eval/run_sizer_bakeoffs.py`):
-
-| Model | Anchor points (prompt tokens → decode tok/s) |
-|---|---|
-""")
-    for mk in MODELS.keys():
-        try:
-            anchors = calibration_anchors(mk)
-        except Exception:
-            continue
-        display = MODELS[mk]["display_name"]
-        pts = "  •  ".join(f"{pt:,} → {ts:.1f}" for pt, ts, _ in anchors)
-        st.markdown(f"| {display} | {pts} |")
-    st.markdown(f"""
-**Interpolation:** log-linear on the context axis between adjacent anchors.
-Context length matters more logarithmically than linearly — a 2x context
-increase from 4K→8K hurts decode more than 40K→80K, which is why the
-x-axis is log-scaled above.
-
-**Extrapolation:** clamped to the last anchor's tok/s value (so we don't
-overstate the collapse). Run bake-offs at 16K/24K/32K/64K prompt
-lengths to fill in the right side of the curve.
-
-**BW scaling to other tiers:** decode is bandwidth-bound — tok/s on a
-projected tier = (5090 interpolated tok/s) × (tier effective BW /
-5090 effective BW) × compiler_quality. For the currently selected tier
-({hw.name}), that multiplier is {hw.effective_bandwidth_gbs / 1523.2:.3f}×.
-
-**What this improves vs the prior single-point model:** project_llm's
-BW projection formerly grabbed whichever workload's tok/s was labeled
-for the user's choice. With the curve, we interpolate to the actual
-prompt_tokens the user specified. For mid-range contexts (1K-10K) this
-is materially more accurate than clamping to the nearest workload anchor.
-""")
-
-st.markdown("---")
-
-
-# Cross-tier comparison table
-st.subheader("Cross-tier comparison")
-st.caption(
-    f"All tiers projected from RTX 5090's measured baseline for "
-    f"**{MODELS[model_key]['display_name']}** at "
-    f"**{WORKLOAD_DEFAULTS[workload_id]['label']}**. "
-    "Lower tier → more bandwidth-bound → slower decode. "
-    "*Total / Usable BW* = peak GB/s / 70%-utilization GB/s "
-    "(uniform `bandwidth_efficiency` across tiers). "
-    "Src (Phase 2 projection-source classification): 🟢 measured "
-    "(direct silicon measurement — 5090 cell or tier-level Skippy "
-    "anchor) · 🟡 same-class projection (BW-scaled within tier_family "
-    "from a measured anchor; covers memory-upgrade overlays and "
-    "BW-equal sibling tiers) · 🟠 cross-class extrapolation (two-floor "
-    "MAX(BW, compute) physics — no anchor in tier_family yet) · 🔴 "
-    "won't fit / dtype mismatch · ⚠️ tight memory headroom suffix."
-)
-rows = []
-for stock_tname, stock_thw in TIERS.items():
-    # If the user has toggled an LPDDR6 memory upgrade, swap the
-    # upgraded variant in for THAT tier's row only — surfaces the
-    # upgraded BW / DDR type / decode tok/s and tags the Tier label
-    # with the variant suffix (e.g. "NPU Mid (LPDDR6-12)"). Other
-    # rows stay at their stock memory.
-    if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
-        tname, thw = hw.name, hw
-    else:
-        tname, thw = stock_tname, stock_thw
-
-    # DDR type + Total/Usable BW columns — pull straight from Hardware
-    # fields. Compact format to keep the table from widening:
-    # "128b LPDDR5X @ 8.4 GT/s" / "134.4 / 94.1"
-    ddr_type = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
-                f"{thw.mem_data_rate_gtps:g} GT/s")
-    bw_str = (f"{thw.mem_bandwidth_gbs:.1f} / "
-              f"{thw.effective_bandwidth_gbs:.1f}")
-
-    try:
-        rr = project_llm(
-            model_key, thw, workload_id,
-            prompt_tokens=prompt_tokens,
-            decode_tokens=decode_tokens,
-            compiler_quality=compiler_quality,
-            npu_share=npu_share,
-        )
-        if rr["source"] == "wont_fit":
-            f = rr["feasibility"]
-            rows.append({
-                "Tier": tname, "Src": "🔴",
-                "DDR type": ddr_type, "Total/Usable BW": bw_str,
-                "Decode": "—", "Prefill": "—", "Total (s)": "—",
-                "Host": f"won't fit · needs {f['required_gb']} GB "
-                        f"(has {f['available_gb']})",
-            })
-            continue
-        if rr["source"] == "dtype_mismatch":
-            d = rr["dtype_detail"]
-            rows.append({
-                "Tier": tname, "Src": "🔴",
-                "DDR type": ddr_type, "Total/Usable BW": bw_str,
-                "Decode": "—", "Prefill": "—", "Total (s)": "—",
-                "Host": (f"dtype · needs {d['model_needs']} "
-                         f"(has {'/'.join(d['hw_supports'])})"),
-            })
-            continue
-        # Pick Src icon by Phase 2 source classification:
-        # 🟢 measured (direct cell or anchored on this tier)
-        # 🟡 same_class_anchor (BW-scaled within family — memory-upgrade
-        #    overlays and BW-equal sibling tiers both land here)
-        # 🟠 cross_class (two-floor MAX physics, no anchor in family)
-        # ⚠️ suffix for tight memory headroom.
-        _src_icon_by_class = {
-            "measured": "🟢",
-            "measured_anchor": "🟢",
-            "same_class_anchor": "🟡",
-            "cross_class": "🟠",
-        }
-        src_icon = _src_icon_by_class.get(rr["source"], "⚪")
-        if rr["feasibility"]["verdict"] == "tight":
-            src_icon = src_icon + "⚠️"
-        rows.append({
-            "Tier": tname, "Src": src_icon,
-            "DDR type": ddr_type, "Total/Usable BW": bw_str,
-            # Stringify all numeric values: the wont_fit / dtype_mismatch
-            # branches above use "—" sentinels which collide with floats
-            # under pandas object-dtype + pyarrow serialization (Streamlit
-            # 1.56's st.dataframe → pa.Table.from_pandas raises
-            # ArrowTypeError 'Expected bytes, got a float object').
-            "Decode":   f"{rr['decode_tok_s']:.1f}",
-            "Prefill":  f"{round(rr['prefill_tok_s'])}",
-            "Total (s)": f"{rr['total_s']:.2f}",
-            "Host":     (f"{rr['host_ms']:.0f}"
-                         if isinstance(rr['host_ms'], (int, float))
-                         else str(rr['host_ms'])),
-        })
-    except ValueError:
-        # Pad missing columns with "—" so pandas doesn't fill them with
-        # NaN (float) — same mixed-type-collision risk.
-        rows.append({
-            "Tier": tname, "Src": "⚪",
-            "DDR type": ddr_type, "Total/Usable BW": bw_str,
-            "Decode": "—", "Prefill": "—",
-            "Total (s)": "—", "Host": "—",
-        })
-df = pd.DataFrame(rows)
-st.dataframe(df, width="stretch", hide_index=True)
-
-
-# Cross-model comparison on this tier
-st.subheader("Cross-model comparison (on this tier)")
-st.caption("MoE's decode advantage comes from fewer active params per token — "
-           "dense 14B moves ~4.5× more weight bytes per decoded token than MoE 30B-A3B.")
-rows2 = []
-for mk in MODELS:
-    try:
-        rr = project_llm(
-            mk, hw, workload_id,
-            prompt_tokens=prompt_tokens,
-            decode_tokens=decode_tokens,
-            compiler_quality=compiler_quality,
-            npu_share=npu_share,
-        )
-        if rr["source"] == "wont_fit":
-            rows2.append({
-                "Model": MODELS[mk]["display_name"],
-                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-                "Decode tok/s": "—",
-                "Total (s)": "—",
-                "Source": "🔴 won't fit",
-            })
-            continue
-        if rr["source"] == "dtype_mismatch":
-            rows2.append({
-                "Model": MODELS[mk]["display_name"],
-                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-                "Decode tok/s": "—",
-                "Total (s)": "—",
-                "Source": "🔴 dtype mismatch",
-            })
-            continue
-        # Phase 2 4-state source classification (same scheme as cross-tier
-        # table): 🟢 measured/measured_anchor, 🟡 same_class_anchor,
-        # 🟠 cross_class, ⚠️ tight memory headroom suffix.
-        _src_label_by_class = {
-            "measured":          "🟢 measured",
-            "measured_anchor":   "🟢 measured anchor",
-            "same_class_anchor": "🟡 same-class",
-            "cross_class":       "🟠 cross-class",
-        }
-        _src_label = _src_label_by_class.get(rr["source"], "⚪ unknown")
-        if rr["feasibility"]["verdict"] == "tight":
-            _src_label = _src_label + " ⚠️"
-        rows2.append({
-            "Model": MODELS[mk]["display_name"],
-            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            # Stringify numerics (same rationale as the cross-tier table
-            # above — pyarrow can't serialize a column that mixes "—"
-            # sentinels with floats under pandas object dtype).
-            "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
-            "Total (s)":    f"{rr['total_s']:.2f}",
-            "Source":       _src_label,
-        })
-    except ValueError:
-        # Same column-padding pattern — avoid NaN-vs-string mixing.
-        # Active params + Bytes/token decode are uniformly floats in
-        # the other branches (model metadata, not result-dependent),
-        # so keep them as floats here too.
-        rows2.append({
-            "Model": MODELS[mk]["display_name"],
-            "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
-            "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
-            "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2),
-            "Decode tok/s": "—",
-            "Total (s)": "—",
-            "Source": "⚪ no data",
-        })
-df2 = pd.DataFrame(rows2)
-st.dataframe(df2, width="stretch", hide_index=True)
-
-
-# XLSX download
-st.markdown("---")
-buf = io.BytesIO()
-with pd.ExcelWriter(buf, engine="openpyxl") as xlw:
-    df.to_excel(xlw, sheet_name="cross_tier", index=False)
-    df2.to_excel(xlw, sheet_name="cross_model", index=False)
-st.download_button(
-    "⬇ Download projections (XLSX)",
-    data=buf.getvalue(),
-    file_name=f"skippy_sizer_{model_key}_{tier_name.replace(' ','_')}_{workload_id}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
 
 
 # Measured provenance panel
