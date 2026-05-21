@@ -1,4 +1,7 @@
-# keyhole-sizer — interactive NPU sizing sandbox for the Keyhole bake-off findings
+# personal-ai-assistant-sizer — Skippy NPU sizer (retrofitted onto ratchet v0.2.3)
+
+# Shared SoC sizing engine — canonical tiers, projection, anchors, capability.
+ratchet>=0.2.3,<0.3.0
 
 streamlit>=1.40.0
 pandas>=2.2.0

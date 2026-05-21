@@ -24,6 +24,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ratchet import TIERS as _RATCHET_TIERS
+from ratchet.precision import CapabilityLevel
+
 
 @dataclass(frozen=True)
 class PrecisionMeasurement:
@@ -112,45 +115,31 @@ _CAP_COMPAT = "tensor_compat"   # tensor-core via binary compat (e.g. sm80 IMMA 
 _CAP_NONE = "none"
 
 
+# Map ratchet's canonical CapabilityLevel enum onto PAI's UI capability
+# strings (consumed by capability_badge / capability_label / capability_color).
+_RATCHET_LEVEL_TO_PAI = {
+    CapabilityLevel.TENSOR_NATIVE: _CAP_TENSOR,
+    CapabilityLevel.TENSOR_COMPAT: _CAP_COMPAT,
+    CapabilityLevel.CUDA_CORE:     _CAP_CUDA,
+    CapabilityLevel.UNSUPPORTED:   _CAP_NONE,
+}
+
+
 def tier_precision_capability(hw_name: str) -> dict[str, str]:
-    """Return {precision: capability_level} for a given tier name."""
-    # Hardcoded because this is silicon-family knowledge, not derivable
-    # from the perf/BW numbers we store on Hardware. Extend as we add tiers.
-    if hw_name.startswith("RTX 5090"):
-        # Consumer Blackwell SM120. Earlier framing said "tensor-core INT8
-        # dropped, DP4A CUDA-core fallback" — [backend]'s 2026-04-24 ncu
-        # probe falsified that. The real story: SM120 HARDWARE has INT8
-        # tensor-core capability (sm80 IMMA via binary compat — 13M tensor-
-        # pipe instructions measured on yolov8n-seg INT8 TRT engine), but
-        # SM120-native CUTLASS INT8 kernel templates don't exist yet. So:
-        #   - Pre-compiled TRT INT8 (YOLO): ✓ runs on tensor cores via sm80 compat
-        #   - Fresh CUTLASS INT8 (vLLM W8A8): ✗ blocks — no SM120 templates
-        # Marked as _CAP_COMPAT (tensor-core via binary compat) — amber, not
-        # green, because LLM-class workloads (the sizer's focus) are blocked
-        # today even though the hardware is capable.
-        return {
-            "bf16/fp16": _CAP_TENSOR,
-            "fp8":       _CAP_TENSOR,
-            "int8":      _CAP_COMPAT,   # tensor-core via sm80 binary compat; vLLM/CUTLASS blocked
-            "q4_km":     _CAP_TENSOR,   # weight-only, runs on bf16 tensor cores
-        }
-    if hw_name == "NPU Low-LP4":
-        return {"bf16/fp16": _CAP_NONE,  "fp8": _CAP_NONE, "int8": _CAP_TENSOR, "q4_km": _CAP_NONE}
-    if hw_name in ("NPU Low-LP5-32bit", "NPU Low-LP5-64bit"):
-        return {"bf16/fp16": _CAP_NONE,  "fp8": _CAP_NONE, "int8": _CAP_TENSOR, "q4_km": _CAP_NONE}
-    if hw_name == "NPU Low-LP5X":
-        return {"bf16/fp16": _CAP_TENSOR, "fp8": _CAP_TENSOR, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
-    if hw_name == "NPU Mid":
-        # Per [docs] 2026-04-29 14:58 spec correction: actual Mid silicon
-        # is INT8-only, no FP path. bf16 / fp8 / fp16 capabilities are
-        # not present on the chip. INT8 stays tensor_native; Q4_K_M
-        # stays tensor_native (weight-only quant runs via the INT8
-        # dequant path — that's what Skippy's measured anchor proves).
-        return {"bf16/fp16": _CAP_NONE, "fp8": _CAP_NONE, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
-    if hw_name == "NPU High":
-        return {"bf16/fp16": _CAP_TENSOR, "fp8": _CAP_TENSOR, "int8": _CAP_TENSOR, "q4_km": _CAP_TENSOR}
-    # Default conservative — unknown tier
-    return {"bf16/fp16": _CAP_NONE, "fp8": _CAP_NONE, "int8": _CAP_NONE, "q4_km": _CAP_NONE}
+    """Return {precision: capability_level} for a given tier name.
+
+    Silicon-capability knowledge is now owned by ratchet's canonical capability
+    tables (ADR 008). This reads `Hardware.capability_levels` from the ratchet
+    registry and maps ratchet's CapabilityLevel onto PAI's UI strings. Memory
+    variant names (e.g. "NPU Mid (LPDDR6 @ 14 GT/s)") resolve to their stock
+    tier — silicon caps don't change with a memory swap."""
+    hw = _RATCHET_TIERS.get(hw_name) or _RATCHET_TIERS.get(hw_name.split(" (")[0])
+    caps = hw.capability_levels if hw is not None else None
+    if not caps:
+        # Unknown tier or a tier with no capability table — conservative.
+        return {"bf16/fp16": _CAP_NONE, "fp8": _CAP_NONE,
+                "int8": _CAP_NONE, "q4_km": _CAP_NONE}
+    return {prec: _RATCHET_LEVEL_TO_PAI[info.level] for prec, info in caps.items()}
 
 
 def capability_badge(level: str) -> str:

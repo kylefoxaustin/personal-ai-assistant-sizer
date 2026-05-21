@@ -20,7 +20,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from sizer.measured import get_bundle_summary, calibration_anchors
-from sizer.npu_anchors import load_llm_anchor, load_cnn_anchor
+from ratchet.anchors import load_llm_anchor, load_cnn_anchor
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, model_active_bytes_per_token, describe_hw,
     decode_tok_s_at_context, project_what_if_decode_tok_s,
@@ -543,9 +543,6 @@ _ANCHOR_MODEL_KEY_MAP = {
 def _maybe_anchor_overlay(r, model_key, hw, tier_name, decode_tokens):
     if r is None or r.get("source") in ("wont_fit", "dtype_mismatch"):
         return r
-    # Anchors measured at stock LPDDR5X 8.4 GT/s — skip hot-swap on memory upgrades.
-    if abs(hw.mem_data_rate_gtps - 8.4) > 0.05:
-        return r
     spec_model = _ANCHOR_MODEL_KEY_MAP.get(model_key)
     if spec_model is None:
         return r
@@ -561,11 +558,21 @@ def _maybe_anchor_overlay(r, model_key, hw, tier_name, decode_tokens):
     anchor = load_llm_anchor(spec_tier, spec_prec, spec_model)
     if anchor is None or anchor.source != "measured" or anchor.tokps <= 0:
         return r
+    # Memory-upgrade clones BW-scale the measured anchor's decode (decode is
+    # BW-bound on active-param weight streaming); TTFT held at stock (prefill is
+    # compute-bound). Stock tiers keep ratio 1.0. Mirrors ratchet v0.2.3 / ADR
+    # 011 Amendment 5 — prior code skipped the overlay entirely on memory
+    # upgrades, dropping the anchor to cross-class (a measured→cross-class
+    # discontinuity where the first upgrade tier could read lower than stock).
+    bw_ratio = 1.0
+    if getattr(hw, "bw_projected", False) and hw.stock_mem_bandwidth_gbs:
+        bw_ratio = hw.mem_bandwidth_gbs / hw.stock_mem_bandwidth_gbs
+    decode = anchor.tokps * bw_ratio
     # Override decode_tok_s + recompute decode_s/total_s. Preserve TTFT/prefill/
     # feasibility/regime from projection — anchor doesn't always carry those.
     r2 = dict(r)
-    r2["decode_tok_s"] = anchor.tokps
-    r2["decode_s"] = decode_tokens / anchor.tokps
+    r2["decode_tok_s"] = decode
+    r2["decode_s"] = decode_tokens / decode
     r2["total_s"] = r.get("ttft_s", 0.0) + r2["decode_s"]
     r2["source"] = "measured_silicon_anchor"
     r2["_silicon_anchor_meta"] = {
@@ -1179,7 +1186,7 @@ with _tab_precision:
     with st.expander("📡 Measured silicon anchors (private)", expanded=False):
         st.caption(
             f"Direct measurements on real NPU silicon. Numbers live in "
-            f"Streamlit secrets (`sizer/npu_anchors.py` loads them) — this "
+            f"Streamlit secrets (`ratchet.anchors` loads them) — this "
             f"surface confirms they loaded. Bandwidth derivation uses your "
             f"selected **NPU_share = {int(npu_share*100)}%** as the share "
             f"override (change the NPU_share selector in the sidebar to "
@@ -1248,7 +1255,7 @@ with _tab_precision:
 
         st.caption(
             "Private silicon anchors. Numbers loaded from Streamlit secrets "
-            "via `sizer/npu_anchors.py`. Per spec: peak_bw × bw_share × "
+            "via `ratchet.anchors`. Per spec: peak_bw × bw_share × "
             "bw_efficiency derives achieved BW; the share override at "
             "render-time lets the NPU_share selector re-derive without "
             "re-reading secrets. **The headline decode-rate tile at the top "
