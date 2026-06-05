@@ -8,7 +8,9 @@ engine consolidation.
 
 PAI depends on `ratchet>=0.2.2,<0.3.0` (the `<0.3.0` upper bound is deliberate:
 ratchet v0.3.0 will carry breaking heterogeneous-architecture work; surfaces bump
-their pin intentionally, they don't auto-upgrade).
+their pin intentionally, they don't auto-upgrade). `requirements.txt` currently
+pins the git tag `@v0.2.7` (ADR 016 FP4 runtime-maturity + ADR 017 NPU
+precision-set — see the precision-set section below).
 
 **Adopted from ratchet** (local definitions deleted):
 - Anchor loader: `from ratchet.anchors import load_llm_anchor, load_cnn_anchor`
@@ -37,6 +39,58 @@ Projection consolidation onto ratchet's `project_llm` is a deliberate later pass
   `qwen3_30b_a3b_moe`) at lookup time only. PAI's catalog / `session_state`
   keys stay hyphenated (transitional; canonical-key migration is a future
   cross-surface project).
+
+## NPU precision-set selector (ratchet v0.2.7 / ADR 017)
+
+An escalating precision-capability ladder under the **Mid/High** tier selector —
+**Stock / INT-only / INT+FP8 / INT+FP8+FP4** — so users can A/B/C the same model
+across precision states and read off the prefill / accuracy deltas. It posits an
+FP-capable tensor engine at the tier's memory class; FP4 is a 🟠 modeled
+projection (confidence-low, **zero edge-NPU silicon anchors**). Cross-surface
+spec: `personal-ai-framework/docs/npu-precision-set-selector-spec.md`. Built on
+PAI first (the reference impl); keyhole-sizer mirrors it.
+
+**Engine (`sizer/npu_model.py`):**
+- `hw_with_precision(base_hw, precision_set)` builds the rung variant via
+  ratchet's `make_custom_tier` with the spec §4 ladder (Mid 100/200/200/400,
+  High 200/400/400/800 = bf16/int8/fp8/fp4). **It re-homes the variant's
+  `tier_family` back to the stock family** (`make_custom_tier` labels it
+  `LP5X-custom-*`) so `_find_same_family_anchor` resolves the **measured** Mid/High
+  cell instead of dropping to the first-principles cross-class floor — this is
+  what makes the anchors reproduce. Composes on top of a memory upgrade (lifts
+  mem specs from `base_hw`).
+- `project_llm` gained `fp4_runtime_maturity` + a one-line `resolve_floor_dtype`
+  override at the dtype-resolution step. **Non-breaking**: `npu_precision_set`
+  is `None` on every canonical tier, so `resolve_floor_dtype` returns the model
+  dtype unchanged (import-time anchor asserts still pass).
+- The same-family anchor-ratio branch scales FP8/FP4 rungs against the
+  **anchor's own native dtype** (Mid int8), not the target rung dtype — else the
+  ratio collapses to 1× when the Mid anchor lacks that `peak_tops` field (Mid has
+  no fp8/fp4/bf16). This is the subtle fix that makes High·FP8=175.5 not 351.
+
+**UI (`app.py`):** escalating radio under Mid/High (composes with the memory
+upgrade); the FP4 rung reveals a **mature/immature** toggle defaulting to
+**immature** (the honest edge floor — engine default is `mature`, so PAI passes
+`immature` explicitly per ADR 016); a 3-column compare panel in the **Precision**
+tab.
+
+**Two cross-surface LOCKED nuances** (docs-ratified 2026-06-05, both sizers
+render identically):
+1. **Baseline = measured-anchored 351 ms** (the real Mid cell), NOT the
+   spec-computed 333. Makes ratios exact: naive→INT8 = precisely 2× (351→175.5);
+   immature-FP4 == naive (the ADR-016 no-win, exact).
+2. **Weight RAM = fixed-by-model** with an orthogonal-axis caption. The compute
+   rung (int8/fp8/nvfp4 math) changes prefill+accuracy; the **weight format**
+   (Q4/Q8/FP4-weight bytes) changes RAM + decode-BW — two **independent** axes.
+   An already-Q4 model keeps 4-bit weights at every rung → RAM fixed. FP4's
+   half-RAM benefit is a weight-format (model-choice) axis, NOT a compute-rung
+   effect. (Conflating them re-introduces the memory-vs-compute confound the
+   whole FP4 story exists to separate.)
+
+Validation anchors (Qwen3-30B-A3B MoE @1K, npu_share=1.0): High INT8=175.5 /
+FP8=175.5 / FP4-mature=87.8 / FP4-immature=351; Mid INT8=351 / FP8=351 /
+FP4-mature=175.5 / FP4-immature=702. Decode held 37.9 tok/s (BW-bound, model
+already Q4).
 
 ### Why ratchet guards `import streamlit`
 
