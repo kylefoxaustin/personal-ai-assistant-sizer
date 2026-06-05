@@ -1,11 +1,11 @@
-# personal-ai-assistant-sizer — Skippy NPU sizer (retrofitted onto ratchet v0.2.4)
+# personal-ai-assistant-sizer — Skippy NPU sizer (retrofitted onto ratchet v0.2.7)
 
 # Shared SoC sizing engine — canonical tiers, projection, anchors, capability.
 # Installed from GitHub (public) — NOT from PyPI, because PyPI's `ratchet` is
 # a different unrelated project (versions 0.1.0–0.2.1, 0.3.0–0.4.1) that
 # collides with Kyle's package name. Streamlit Cloud will install via pip
 # from the github tag below; pin tightly so deploys are reproducible.
-ratchet @ git+https://github.com/kylefoxaustin/ratchet.git@v0.2.4
+ratchet @ git+https://github.com/kylefoxaustin/ratchet.git@v0.2.7
 
 streamlit>=1.40.0
 pandas>=2.2.0

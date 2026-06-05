@@ -14,12 +14,15 @@ in the sizer UI next to every projected cell.
 """
 from __future__ import annotations
 
+import dataclasses
+
 from ratchet import (
     Hardware,
     NPU_LOW_LP4, NPU_LOW_LP5_32BIT, NPU_LOW_LP5_64BIT, NPU_LOW_LP5X,
     NPU_MID, NPU_HIGH, RTX_5090_REFERENCE,
     hw_with_memory, MEMORY_UPGRADE_OPTIONS,
     hw_supports_dtype, hw_peak_tops_for_dtype,
+    make_custom_tier, resolve_floor_dtype,
 )
 
 
@@ -40,6 +43,90 @@ TIERS = {hw.name: hw for hw in (
 
 HW_SLUGS = {t.name: t.name.lower().replace(" ", "_").replace("(", "").replace(")", "").replace(",", "")
             for t in TIERS.values()}
+
+
+# ───────────────── NPU precision-set selector (ratchet ADR 017) ─────────────────
+# A forward-looking "what precision can the tensor engine execute natively" axis,
+# orthogonal to the memory/compute tier (cross-surface spec:
+# personal-ai-framework/docs/npu-precision-set-selector-spec.md). Building a tier
+# with npu_precision_set is ATOMIC: the rung sets the effective compute_dtype for
+# the projection (int8->'int8', int8_fp8->'fp8', int8_fp8_fp4->'nvfp4'; immature
+# FP4 collapses to the bf16 floor per ADR 016), zeros peak_tops above the rung,
+# and swaps in the matching capability dict. PAI's project_llm honors all of this
+# via resolve_floor_dtype at the dtype-resolution step.
+#
+# TOPS ladder (spec §4, datapath-doubling physics: 16-bit=X, 8-bit=2X, 4-bit=4X;
+# FP8 shares the 8-bit datapath with INT8 -> same TOPS). FP4 is a 🟠 modeled
+# projection — zero FP4 silicon anchors exist on any NPU (confidence=low).
+_PRECISION_LADDER_TOPS = {
+    "NPU Mid":  {"bf16": 100.0, "int8": 200.0, "fp8": 200.0, "fp4": 400.0},
+    "NPU High": {"bf16": 200.0, "int8": 400.0, "fp8": 400.0, "fp4": 800.0},
+}
+_PRECISION_SILICON_CLASS = {
+    "NPU Mid":  "lp5x_128_int8",
+    "NPU High": "lp5x_128",
+}
+# UI label -> npu_precision_set value (None = stock, no override). Order is the
+# escalating ladder the radio renders.
+PRECISION_SET_OPTIONS = [
+    ("Stock (no override)", None),
+    ("INT-only",            "int8"),
+    ("INT + FP8",           "int8_fp8"),
+    ("INT + FP8 + FP4",     "int8_fp8_fp4"),
+]
+_PRECISION_SET_SUFFIX = {
+    "int8":         "INT-only",
+    "int8_fp8":     "INT+FP8",
+    "int8_fp8_fp4": "INT+FP8+FP4",
+}
+
+
+def hw_with_precision(base_hw: Hardware, precision_set: str | None) -> Hardware:
+    """Clone a Mid/High tier as an NPU precision-set variant (ratchet ADR 017).
+
+    Posits an FP-capable tensor engine at `base_hw`'s memory class, carrying the
+    spec §4 TOPS ladder and stamping `npu_precision_set` on the tier so PAI's
+    `project_llm` runs the model at the rung's effective dtype. Memory specs are
+    lifted from `base_hw`, so this composes on top of an LPDDR memory upgrade.
+
+    The variant's `tier_family` is preserved from `base_hw` (it IS the same
+    physical memory family — only the tensor-engine precision differs), so the
+    projection resolves the same measured-anchor as the stock tier and BW-scales
+    decode / compute-ratios prefill off it, rather than dropping to the
+    first-principles cross-class floor.
+
+    `precision_set` of None (or an unknown tier with no ladder) returns
+    `base_hw` unchanged.
+    """
+    if precision_set is None:
+        return base_hw
+    # The ladder/silicon-class tables key off the canonical tier name; a
+    # memory-upgraded clone carries `tier_lookup_name` back to its stock tier.
+    ladder_key = getattr(base_hw, "tier_lookup_name", None) or base_hw.name
+    ladder = _PRECISION_LADDER_TOPS.get(ladder_key)
+    silicon_class = _PRECISION_SILICON_CLASS.get(ladder_key)
+    if ladder is None or silicon_class is None:
+        return base_hw  # only Mid/High carry a precision ladder
+    suffix = _PRECISION_SET_SUFFIX.get(precision_set, precision_set)
+    variant = make_custom_tier(
+        f"{base_hw.name} · {suffix}",
+        silicon_class=silicon_class,
+        peak_tops_bf16=ladder["bf16"],
+        peak_tops_int8=ladder["int8"],
+        peak_tops_fp8=ladder["fp8"],
+        peak_tops_fp4=ladder["fp4"],
+        mem_bandwidth_gbs=base_hw.mem_bandwidth_gbs,
+        mem_capacity_gb=base_hw.mem_capacity_gb,
+        mem_bus_width_bits=base_hw.mem_bus_width_bits,
+        mem_type=base_hw.mem_type,
+        mem_data_rate_gtps=base_hw.mem_data_rate_gtps,
+        npu_precision_set=precision_set,
+    )
+    # Re-home into the stock memory family so same-family anchor resolution
+    # (and BW-scaled decode / compute-ratio prefill) fires off the measured
+    # Mid/High cells. make_custom_tier labels it 'LP5X-custom-*' since it can't
+    # know the variant shares the stock memory subsystem; it does.
+    return dataclasses.replace(variant, tier_family=base_hw.tier_family)
 
 
 # Hyphenated PAI catalog key -> canonical snake-case key used by ratchet's
@@ -1572,6 +1659,7 @@ def project_llm(
     host_ms: float = 0.0,
     compiler_quality: float = 1.0,
     npu_share: float | None = None,
+    fp4_runtime_maturity: str = "mature",
 ) -> dict:
     """Project LLM decode tok/s + TTFT for (model, hw, workload).
 
@@ -1605,7 +1693,19 @@ def project_llm(
     # in fp16. An INT8-only NPU cannot execute this without either re-quant
     # to W8A8 or CPU fp16 fallback (neither modeled). Mark incompatible cells.
     model_meta = MODELS[model_key]
-    required_dtype = model_meta.get("compute_dtype", "fp16")
+    # The NPU precision-set rung (ratchet ADR 017), if the tier carries one,
+    # overrides the model's nominal compute_dtype for the projection: a Q4_K_M
+    # model nominally runs fp16 (reads peak_tops_bf16), but on an
+    # FP8-/FP4-capable engine the rung asserts the matmul executes at the
+    # selected precision (int8 / fp8 / nvfp4). Immature FP4 collapses back to
+    # the bf16 floor (ADR 016). resolve_floor_dtype is a no-op (returns the
+    # model dtype unchanged) for every canonical tier, where npu_precision_set
+    # is None — so this is non-breaking for the existing catalog.
+    required_dtype = resolve_floor_dtype(
+        getattr(hw, "npu_precision_set", None),
+        model_meta.get("compute_dtype", "fp16"),
+        fp4_runtime_maturity,
+    )
     if not hw_supports_dtype(hw, required_dtype):
         supported = [d for d in ("int8", "fp8", "bf16") if hw_supports_dtype(hw, d)]
         return {
@@ -1716,7 +1816,21 @@ def project_llm(
             host_ms_value = ref.get("host_ms", host_ms) if ref else host_ms
             if prefill_anchor is not None:
                 target_peak_tops = hw_peak_tops_for_dtype(hw, required_dtype)
-                anchor_peak_tops = hw_peak_tops_for_dtype(anchor_tier, required_dtype)
+                # The anchor was measured at ITS OWN native precision (the
+                # int8-only Mid anchor ran W8A8), which may differ from the
+                # target's precision-set rung. Resolve the anchor's dtype
+                # against its own npu_precision_set so an FP8/FP4 rung on a
+                # target whose anchor tier lacks that peak_tops field doesn't
+                # collapse the ratio to 1.0 (e.g. High·FP8 must read High fp8
+                # 400 / Mid int8 200 = 2×, not Mid fp8 0 → 1×). For canonical
+                # (no precision-set) projections both sides resolve to the
+                # model dtype → identical to prior behavior (non-breaking).
+                anchor_required_dtype = resolve_floor_dtype(
+                    getattr(anchor_tier, "npu_precision_set", None),
+                    model_meta.get("compute_dtype", "fp16"),
+                    fp4_runtime_maturity,
+                )
+                anchor_peak_tops = hw_peak_tops_for_dtype(anchor_tier, anchor_required_dtype)
                 compute_ratio = (target_peak_tops / max(anchor_peak_tops, 1e-9)
                                   if anchor_peak_tops > 0 else 1.0)
                 prefill_tok_s = prefill_anchor * compute_ratio * compiler_quality
