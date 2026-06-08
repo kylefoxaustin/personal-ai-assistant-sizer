@@ -59,6 +59,26 @@ streamlit run app.py
 Open http://localhost:8501. If `.streamlit/secrets.toml` has `PASSWORD=...`,
 a password gate appears.
 
+### Horizontal-layout prototype (experimental)
+
+```bash
+streamlit run app_horizontal_prototype.py
+```
+
+A parallel layout mockup judged side-by-side against the live sidebar app
+(the live `app.py` is untouched). No left sidebar — a top horizontal **control
+strip** (NPU-tier pills + Model / Quant / Workload pickers + Memory / BW-share
+popovers + a ⚙ Settings popover), full-width results, and each section's verbose
+depth-tabs tucked into a collapsible "🔎 detail" expander so headline metrics
+stay on a short first paint. Mirrors keyhole-sizer's horizontal prototype
+(`app_horizontal_prototype.py`) on PAI's LLM-only domain. The **Quant ▾** pill
+remaps to the q4/q5/q8 sibling catalog row when one exists (PAI bakes quant into
+the catalog key — there is no quant param in `project_llm`). The **KPIs** section
+carries the full export surface: a current-config CSV plus cross-tier +
+cross-model tables and an uber XLSX (both sheets) for the chosen tier. No
+password gate (local mockup). If the layout is approved, "Step 3" migrates the
+live `app.py` onto this shell.
+
 ## Data sources — two layers
 
 1. **RTX 5090 reference bake-offs** populate `sizer/sizer_bundle.json` via
@@ -82,8 +102,12 @@ fresh bake-offs.
 
 ## Architecture
 
-- `app.py` — Streamlit UI (~2200 lines). 7-tab main page; sidebar drives
+- `app.py` — Streamlit UI (~2400 lines). 7-tab main page; sidebar drives
   model + tier + memory upgrade + NPU_share + workload selection.
+- `app_horizontal_prototype.py` — experimental no-sidebar layout mockup
+  (top control strip, full-width results, collapsible per-section detail
+  expanders). Uses the live engine; parallel to `app.py`, not a replacement.
+  See *Horizontal-layout prototype* under Quickstart.
 - `sizer/npu_model.py` — Hardware dataclass + MODELS catalog (20 entries)
   + TIERS dict + BW-bound `project_llm()` + Phase 2 source-state
   classification.
@@ -124,6 +148,10 @@ Streamlit apps maintained in lockstep. They share:
 - Same `methodology_version` stamp pattern on bundle metadata.
 - Same eval methodology: semantic-graded pass rates (GPT-4o binary judge,
   132-sample v2-RAG) — see the Accuracy tab's Finding 4 surface.
+- Same experimental **horizontal-layout prototype** (`app_horizontal_prototype.py`)
+  and reusable collapsible-detail "minimize" pattern, plus a parity KPI-export
+  surface (cross-tier + cross-model tables + uber XLSX). PAI is the LLM-only cut;
+  keyhole generalizes it across Vision / LLM / VLA workloads.
 
 ## Version history
 
