@@ -19,6 +19,7 @@ shell.
 """
 from __future__ import annotations
 
+import io
 import re
 
 import pandas as pd
@@ -29,7 +30,8 @@ from ratchet.anchors import load_llm_anchor
 from sizer.npu_model import (
     MODELS, TIERS, project_llm, describe_hw, hw_supports_dtype,
     hw_with_memory, MEMORY_UPGRADE_OPTIONS, hw_with_precision,
-    decode_tok_s_at_context, PRODUCTION_REFERENCE_KEY, CATEGORY_LABELS,
+    decode_tok_s_at_context, model_active_bytes_per_token,
+    PRODUCTION_REFERENCE_KEY, CATEGORY_LABELS,
 )
 
 st.set_page_config(page_title="Skippy NPU Sizer · horizontal prototype",
@@ -605,22 +607,108 @@ st.divider()
 
 # ───────────────────────── KPIs ONSCREEN ─────────────────────────
 if st.session_state.get("p_kpi_on", True):
-    st.markdown("#### 📊 KPIs — current configuration")
-    kpi = {
-        "Model": _model["display_name"],
-        "Quant": eff_quant,
-        "Tier": tier_name,
-        "Source": _bl,
-        "Decode tok/s": round(r["decode_tok_s"], 1),
-        "TTFT": _ttft_val,
-        "End-to-end (s)": round(r["total_s"], 2),
-        "Mem required (GB)": r["feasibility"]["required_gb"],
-        "Fits": "✓" if r["feasibility"]["verdict"] != "wont_fit" else "✗",
-    }
-    df = pd.DataFrame([kpi])
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.download_button("⬇ Export KPIs (CSV)", df.to_csv(index=False),
-                       "skippy_kpis.csv", "text/csv", key="p_kpi_dl")
+    st.markdown("#### 📊 KPIs")
+    st.caption(
+        "Two KPI views: **(a) this model across all NPU tiers** (size silicon to "
+        "a target deployment) and **(b) all selectable models on this tier** "
+        "(compare options within a fixed silicon budget). Download both as XLSX "
+        "below. Src: 🟢 measured · 🟡 same-class projection · 🟠 cross-class · "
+        "🔴 won't fit / dtype · ⚠️ tight headroom.")
+
+    # ── (a) Cross-tier — this model across every tier (raw project_llm sources,
+    # no secrets overlay, mirroring the live app's KPI tab). ──
+    st.markdown("**Cross-tier comparison** — "
+                f"_{_model['display_name']} @ {eff_quant}, "
+                f"{WORKLOAD_DEFAULTS[workload_id]['label']}_")
+    _src_icon = {"measured": "🟢", "measured_anchor": "🟢",
+                 "same_class_anchor": "🟡", "cross_class": "🟠"}
+    rows = []
+    for stock_tname, stock_thw in TIERS.items():
+        # If a memory upgrade is active, swap the upgraded variant in for THAT
+        # tier's row only (surfaces upgraded BW + variant-suffixed label).
+        if getattr(hw, "bw_projected", False) and hw.tier_lookup_name == stock_tname:
+            tname, thw = hw.name, hw
+        else:
+            tname, thw = stock_tname, stock_thw
+        ddr = (f"{thw.mem_bus_width_bits}b {thw.mem_type} @ "
+               f"{thw.mem_data_rate_gtps:g} GT/s")
+        bw = f"{thw.mem_bandwidth_gbs:.1f} / {thw.effective_bandwidth_gbs:.1f}"
+        try:
+            rr = project_llm(model_key, thw, workload_id,
+                             prompt_tokens=prompt_tokens, decode_tokens=decode_tokens,
+                             compiler_quality=compiler_quality, npu_share=npu_share)
+            if rr["source"] == "wont_fit":
+                f = rr["feasibility"]
+                rows.append({"Tier": tname, "Src": "🔴", "DDR type": ddr,
+                             "Total/Usable BW": bw, "Decode": "—", "Prefill": "—",
+                             "Total (s)": "—",
+                             "Note": f"won't fit · needs {f['required_gb']} GB"})
+                continue
+            if rr["source"] == "dtype_mismatch":
+                d = rr["dtype_detail"]
+                rows.append({"Tier": tname, "Src": "🔴", "DDR type": ddr,
+                             "Total/Usable BW": bw, "Decode": "—", "Prefill": "—",
+                             "Total (s)": "—",
+                             "Note": f"dtype · needs {d['model_needs']}"})
+                continue
+            icon = _src_icon.get(rr["source"], "⚪")
+            if rr["feasibility"]["verdict"] == "tight":
+                icon += "⚠️"
+            rows.append({"Tier": tname, "Src": icon, "DDR type": ddr,
+                         "Total/Usable BW": bw,
+                         "Decode": f"{rr['decode_tok_s']:.1f}",
+                         "Prefill": f"{round(rr['prefill_tok_s'])}",
+                         "Total (s)": f"{rr['total_s']:.2f}", "Note": ""})
+        except ValueError:
+            rows.append({"Tier": tname, "Src": "⚪", "DDR type": ddr,
+                         "Total/Usable BW": bw, "Decode": "—", "Prefill": "—",
+                         "Total (s)": "—", "Note": "—"})
+    df = pd.DataFrame(rows)
+    st.dataframe(df, width="stretch", hide_index=True)
+
+    # ── (b) Cross-model — all selectable models on the chosen tier. ──
+    st.markdown(f"**Cross-model comparison** — _all models on {tier_name}_")
+    _src_lbl = {"measured": "🟢 measured", "measured_anchor": "🟢 measured anchor",
+                "same_class_anchor": "🟡 same-class", "cross_class": "🟠 cross-class"}
+    rows2 = []
+    for mk in MODELS:
+        base = {"Model": MODELS[mk]["display_name"],
+                "Arch": "MoE" if MODELS[mk]["is_moe"] else "dense",
+                "Active params (B)": round(MODELS[mk]["active_params"] / 1e9, 1),
+                "Bytes/token decode (B)": round(model_active_bytes_per_token(mk) / 1e9, 2)}
+        try:
+            rr = project_llm(mk, hw, workload_id,
+                             prompt_tokens=prompt_tokens, decode_tokens=decode_tokens,
+                             compiler_quality=compiler_quality, npu_share=npu_share)
+            if rr["source"] in ("wont_fit", "dtype_mismatch"):
+                lbl = ("🔴 won't fit" if rr["source"] == "wont_fit"
+                       else "🔴 dtype mismatch")
+                rows2.append({**base, "Decode tok/s": "—", "Total (s)": "—",
+                              "Source": lbl})
+                continue
+            lbl = _src_lbl.get(rr["source"], "⚪ unknown")
+            if rr["feasibility"]["verdict"] == "tight":
+                lbl += " ⚠️"
+            rows2.append({**base, "Decode tok/s": f"{rr['decode_tok_s']:.1f}",
+                          "Total (s)": f"{rr['total_s']:.2f}", "Source": lbl})
+        except ValueError:
+            rows2.append({**base, "Decode tok/s": "—", "Total (s)": "—",
+                          "Source": "⚪ no data"})
+    df2 = pd.DataFrame(rows2)
+    st.dataframe(df2, width="stretch", hide_index=True)
+
+    # ── XLSX export — BOTH sheets (cross_tier + cross_model). This is the
+    # "all configs for the chosen NPU class" export the single-row CSV dropped. ──
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xlw:
+        df.to_excel(xlw, sheet_name="cross_tier", index=False)
+        df2.to_excel(xlw, sheet_name="cross_model", index=False)
+    st.download_button(
+        "⬇ Download all projections (XLSX — cross-tier + cross-model)",
+        data=buf.getvalue(),
+        file_name=f"skippy_sizer_{model_key}_{tier_name.replace(' ', '_')}_{workload_id}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="p_kpi_xlsx")
 
     # ── hardware config (reference detail, collapsed) ──
     with st.expander("🔬 Hardware config — selected tier (incl. overlays)"):
