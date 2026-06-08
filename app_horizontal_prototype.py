@@ -615,6 +615,26 @@ if st.session_state.get("p_kpi_on", True):
         "below. Src: 🟢 measured · 🟡 same-class projection · 🟠 cross-class · "
         "🔴 won't fit / dtype · ⚠️ tight headroom.")
 
+    # ── Current config — single-row snapshot of the active selection + a quick
+    # CSV export (kept alongside the all-configs XLSX below). ──
+    st.markdown("**Current configuration**")
+    _kpi = {
+        "Model": _model["display_name"],
+        "Quant": eff_quant,
+        "Tier": tier_name,
+        "Source": _bl,
+        "Decode tok/s": round(r["decode_tok_s"], 1),
+        "TTFT": _ttft_val,
+        "End-to-end (s)": round(r["total_s"], 2),
+        "Mem required (GB)": r["feasibility"]["required_gb"],
+        "Fits": "✓" if r["feasibility"]["verdict"] != "wont_fit" else "✗",
+    }
+    _df_cur = pd.DataFrame([_kpi])
+    st.dataframe(_df_cur, width="stretch", hide_index=True)
+    st.download_button("⬇ Export current config (CSV)",
+                       _df_cur.to_csv(index=False), "skippy_kpi_current.csv",
+                       "text/csv", key="p_kpi_csv")
+
     # ── (a) Cross-tier — this model across every tier (raw project_llm sources,
     # no secrets overlay, mirroring the live app's KPI tab). ──
     st.markdown("**Cross-tier comparison** — "
