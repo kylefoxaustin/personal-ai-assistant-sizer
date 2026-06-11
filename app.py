@@ -230,8 +230,7 @@ def _per_tier_bar(values: dict[str, float], y_title: str, selected: str):
 
 
 # ───────────────────────── TOP CONTROL STRIP ─────────────────────────
-st.markdown("### 🧠 Skippy NPU Sizer  ·  &nbsp;_horizontal-layout prototype_",
-            unsafe_allow_html=True)
+st.markdown("### 🧠 Skippy NPU Sizer")
 
 with st.container(border=True):
     # ── Row 1: the frequently-touched controls. NPU tier as horizontal pills
@@ -633,8 +632,17 @@ with t_tim:
 st.divider()
 
 # ───────────────────────── KPIs ONSCREEN ─────────────────────────
+# Header + an inline Minimize toggle that collapses the whole KPI body (no need
+# to dig into ⚙ Settings). Implemented as a session_state gate rather than an
+# st.expander because the body nests its own "🔬 Hardware config" expander and
+# Streamlit forbids nested expanders.
 if st.session_state.get("p_kpi_on", True):
-    st.markdown("#### 📊 KPIs")
+    _kh, _km = st.columns([0.82, 0.18])
+    _kh.markdown("#### 📊 KPIs")
+    _km.toggle("Minimize", key="p_kpi_min", help="Collapse the KPIs section")
+
+if (st.session_state.get("p_kpi_on", True)
+        and not st.session_state.get("p_kpi_min", False)):
     st.caption(
         "Two KPI views: **(a) this model across all NPU tiers** (size silicon to "
         "a target deployment) and **(b) all selectable models on this tier** "
@@ -774,7 +782,6 @@ if st.session_state.get("p_kpi_on", True):
         })
 
 st.divider()
-st.caption("⬑ **Prototype** — top control strip + full-width results/charts + "
-           "onscreen KPIs, no sidebar; verbose tabs tuck into the collapsible "
-           "detail expander. Tier across all silicon highlighted in violet. If "
-           "the layout works, Step 3 ports the live app.py onto this shell.")
+st.caption("Top control strip + full-width results/charts + onscreen KPIs, no "
+           "sidebar; verbose tabs tuck into the collapsible detail expander. "
+           "Tier across all silicon highlighted in violet.")
