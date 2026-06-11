@@ -1,6 +1,6 @@
 # Skippy NPU sizer (personal-ai-assistant-sizer)
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-3b82f6?style=flat-square)](https://github.com/kylefoxaustin/personal-ai-assistant-sizer/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-v2.0.0-3b82f6?style=flat-square)](https://github.com/kylefoxaustin/personal-ai-assistant-sizer/releases/tag/v2.0.0)
 [![Live app](https://img.shields.io/badge/Live_app-personal--ai--assistant--sizer.streamlit.app-10b981?style=flat-square&logo=streamlit)](https://personal-ai-assistant-sizer.streamlit.app/)
 
 Interactive sizing tool that projects Skippy's performance (the personal AI
@@ -35,8 +35,12 @@ reviewers evaluating feasibility, not end users.
   selected (tier, model) cell, the headline tile uses the measured value
   with a 🟢 "Measured on real NPU silicon" banner; otherwise it shows the
   BW-projected value with 🟡/🟠 source classification.
-- **Drill into 7 main-page tabs** — `Overview · Accuracy · Precision ·
-  Performance · KPIs · Cost · Data`.
+- **Read KPIs onscreen** — the KPI table renders inline (not download-only),
+  with a current-config CSV plus cross-tier + cross-model tables and an uber
+  XLSX (both sheets) for the chosen tier.
+- **Drill into the `🔎 detail` expander** — the verbose depth tabs
+  (`Accuracy · Precision · Performance · Timing`) tuck into a collapsible
+  per-section expander so the headline metrics stay on a short first paint.
 
 ## Key insight the sizer surfaces
 
@@ -59,25 +63,28 @@ streamlit run app.py
 Open http://localhost:8501. If `.streamlit/secrets.toml` has `PASSWORD=...`,
 a password gate appears.
 
-### Horizontal-layout prototype (experimental)
+`app.py` is the **horizontal layout** (promoted to primary at v2.0.0,
+2026-06-11): no left sidebar — a top horizontal **control strip** (NPU-tier
+pills + Model / Quant / Workload pickers + Memory / BW-share popovers + a ⚙
+Settings popover), full-width results, onscreen KPIs, and each section's verbose
+depth-tabs tucked into a collapsible "🔎 detail" expander so headline metrics
+stay on a short first paint. The **Quant ▾** pill remaps to the q4/q5/q8 sibling
+catalog row when one exists (PAI bakes quant into the catalog key — there is no
+quant param in `project_llm`). Mirrors keyhole-sizer's horizontal go-live
+(its v2.0.0) on PAI's LLM-only domain.
+
+### Legacy vertical-sidebar layout
 
 ```bash
-streamlit run app_horizontal_prototype.py
+streamlit run app_vertical_legacy.py
 ```
 
-A parallel layout mockup judged side-by-side against the live sidebar app
-(the live `app.py` is untouched). No left sidebar — a top horizontal **control
-strip** (NPU-tier pills + Model / Quant / Workload pickers + Memory / BW-share
-popovers + a ⚙ Settings popover), full-width results, and each section's verbose
-depth-tabs tucked into a collapsible "🔎 detail" expander so headline metrics
-stay on a short first paint. Mirrors keyhole-sizer's horizontal prototype
-(`app_horizontal_prototype.py`) on PAI's LLM-only domain. The **Quant ▾** pill
-remaps to the q4/q5/q8 sibling catalog row when one exists (PAI bakes quant into
-the catalog key — there is no quant param in `project_llm`). The **KPIs** section
-carries the full export surface: a current-config CSV plus cross-tier +
-cross-model tables and an uber XLSX (both sheets) for the chosen tier. No
-password gate (local mockup). If the layout is approved, "Step 3" migrates the
-live `app.py` onto this shell.
+The prior layout (the live app through v1.2.0): a tall left **sidebar** drives
+model + tier + memory upgrade + NPU_share + workload selection, and the results
+fill a 7-tab main page (`Overview · Accuracy · Precision · Performance · KPIs ·
+Cost · Data`). Preserved for reference / rollback; it shares the same engine, so
+projections are identical to the horizontal `app.py`. Roll back to it by
+re-pointing the Streamlit Cloud entrypoint, or check out tag `v1.2.0`.
 
 ## Data sources — two layers
 
@@ -102,23 +109,27 @@ fresh bake-offs.
 
 ## Architecture
 
-- `app.py` — Streamlit UI (~2400 lines). 7-tab main page; sidebar drives
-  model + tier + memory upgrade + NPU_share + workload selection.
-- `app_horizontal_prototype.py` — experimental no-sidebar layout mockup
-  (top control strip, full-width results, collapsible per-section detail
-  expanders). Uses the live engine; parallel to `app.py`, not a replacement.
-  See *Horizontal-layout prototype* under Quickstart.
-- `sizer/npu_model.py` — Hardware dataclass + MODELS catalog (20 entries)
-  + TIERS dict + BW-bound `project_llm()` + Phase 2 source-state
-  classification.
+- `app.py` — Streamlit UI, **horizontal layout** (primary since v2.0.0). No
+  sidebar; top control strip drives model + tier + memory upgrade + NPU_share
+  + workload selection; onscreen KPIs; verbose depth-tabs in a collapsible
+  `🔎 detail` expander. See *Quickstart*.
+- `app_vertical_legacy.py` — the prior vertical-sidebar layout (live through
+  v1.2.0). 7-tab main page; sidebar-driven controls. Same engine, identical
+  projections; preserved for reference / rollback.
+- `sizer/npu_model.py` — PAI's visible 7-tier ladder (`TIERS`, composed from
+  ratchet's registry) + MODELS catalog (20 entries) + BW-bound `project_llm()`
+  + the NPU precision-set engine (`hw_with_precision`). Hardware tiers,
+  `hw_with_memory`, and dtype gates come from `ratchet`.
 - `sizer/measured.py` — loads `sizer_bundle.json` → attaches to
   `RTX_5090_REFERENCE.measured_llm` at import; exposes `get_bundle_summary()`
   for the About expander and the `methodology_version` footnote.
-- `sizer/npu_anchors.py` — typed `LLMAnchor` / `CNNAnchor` loader for the
-  private silicon anchor secrets. Returns `None` on missing/zero values so
-  callers fall back to projection.
-- `sizer/precision.py` — precision capability tables + retargeting cost
-  model + annualized lifecycle cost computation.
+- Silicon anchors load via `ratchet.anchors` (`load_llm_anchor` /
+  `load_cnn_anchor`) — the former local `sizer/npu_anchors.py` was lifted into
+  ratchet at v1.1.0. Returns `None` on missing/zero values so callers fall back
+  to projection.
+- `sizer/precision.py` — precision capability tables (sourced from ratchet's
+  canonical capability tables) + retargeting cost model + annualized lifecycle
+  cost computation.
 - `sizer/sizer_bundle.json` — vendored measurements from Skippy bake-offs
   (5090 reference).
 
@@ -148,24 +159,30 @@ Streamlit apps maintained in lockstep. They share:
 - Same `methodology_version` stamp pattern on bundle metadata.
 - Same eval methodology: semantic-graded pass rates (GPT-4o binary judge,
   132-sample v2-RAG) — see the Accuracy tab's Finding 4 surface.
-- Same experimental **horizontal-layout prototype** (`app_horizontal_prototype.py`)
-  and reusable collapsible-detail "minimize" pattern, plus a parity KPI-export
-  surface (cross-tier + cross-model tables + uber XLSX). PAI is the LLM-only cut;
-  keyhole generalizes it across Vision / LLM / VLA workloads.
+- Same **horizontal layout** — both apps promoted it to primary `app.py` at
+  v2.0.0 (keyhole 2026-06-10, PAI 2026-06-11), preserving the prior layout as
+  `app_vertical_legacy.py`. Shared collapsible-detail "minimize" pattern plus a
+  parity KPI-export surface (cross-tier + cross-model tables + uber XLSX). PAI
+  is the LLM-only cut; keyhole generalizes it across Vision / LLM / VLA
+  workloads.
 
 ## Version history
 
 | Version | Date | Highlights |
 |---|---|---|
+| **v2.0.0** | 2026-06-11 | **Horizontal layout go-live** — promoted `app_horizontal_prototype.py` to primary `app.py` (no sidebar, top control strip, onscreen KPIs, collapsible `🔎 detail` expander); prior vertical-sidebar layout preserved as `app_vertical_legacy.py`. Mirrors keyhole-sizer v2.0.0. |
+| **v1.2.0** | 2026-06-11 | Rollback point — last vertical-sidebar `app.py` before the horizontal go-live. |
+| **v1.1.0** | 2026-06-06 | Retrofit onto **ratchet** (the shared SoC sizing engine, Option C). Hardware tiers, anchor loader, memory-upgrade + dtype-gate helpers, and precision-capability tables now come from ratchet; PAI keeps its own projection math. Adds the NPU precision-set selector (Stock / INT-only / INT+FP8 / INT+FP8+FP4) for Mid/High (ratchet v0.2.7 / ADR 017). |
 | **v1.0.0** | 2026-05-18 | First tagged release. Recovery point before engine-extraction. Captures: 20-model catalog with semantic-graded eval (Finding 4), private NPU + CNN anchor-secrets mechanism with hot-swap into headline tile, 7-tab main-page UX, role-classified model dropdown with tier-aware compatibility filter, `methodology_version` stamp surfaced in UI, cross-app convergence with keyhole-sizer. |
 
 ## Roadmap
 
-- **v1.x (next)** — engine-extraction: refactor shared LLM/anchor/bundle
-  layers into a common 'engine' package consumed by PAI sizer, keyhole-
-  sizer, and the upcoming drone-repo sizer. The 4-sizer ecosystem
-  (Skippy / Keyhole / Drone / future-4th) needs a shared core so methodology
-  decisions propagate cleanly.
+- **✅ Engine-extraction (shipped v1.1.0)** — the shared LLM/anchor/bundle
+  layers were extracted into **ratchet**, the common SoC sizing engine consumed
+  by PAI sizer, keyhole-sizer, and the upcoming drone-repo sizer. PAI adopted it
+  Option-C (lightest): ratchet owns hardware tiers + anchor loader + capability
+  tables; PAI keeps its own projection math (consolidation onto ratchet's
+  `project_llm` is a deliberate later pass — rule of three).
 - **v2.x (future)** — continuous /metrics instrumentation on production
   Skippy (model_name labels, prefill/decode split, RAG latency) so the
   bundle regenerates from live production traffic — see
