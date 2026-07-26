@@ -6,11 +6,36 @@ engine consolidation.
 
 ## ratchet retrofit (v1.1.0, Option C — lightest)
 
-PAI depends on `ratchet>=0.2.2,<0.3.0` (the `<0.3.0` upper bound is deliberate:
-ratchet v0.3.0 will carry breaking heterogeneous-architecture work; surfaces bump
-their pin intentionally, they don't auto-upgrade). `requirements.txt` currently
-pins the git tag `@v0.2.7` (ADR 016 FP4 runtime-maturity + ADR 017 NPU
-precision-set — see the precision-set section below).
+`requirements.txt` pins the git tag **`@v0.3.2`**. Surfaces bump their pin
+intentionally; they don't auto-upgrade.
+
+> **Dated correction, 2026-07-26.** This section used to read *"PAI depends on
+> `ratchet>=0.2.2,<0.3.0` — the upper bound is deliberate: ratchet v0.3.0 will
+> carry breaking heterogeneous-architecture work."* That was a **prediction
+> written before v0.3.0 existed, and it turned out to be wrong**; it was never
+> revisited, so the repo carried a self-imposed ceiling that measurement does
+> not support. What v0.3.x actually contains: v0.3.0 = CPU-complex modeling +
+> perception projection (**purely additive** — `projection/cpu.py`,
+> `tiers/cpu.py`, `tiers/perception.py`, none of which PAI imports); v0.3.1 =
+> an i.MX 93 clock correction (2.0→1.7 GHz) for a tier **not in PAI's visible
+> ladder**; v0.3.2 = two new `CalibrationMethod` values (ADR 020).
+> **Verified before the bump:** a 1374-cell matrix — every tier × model ×
+> workload, all memory upgrades, all precision sets × mature/immature,
+> capability badges and tier specs — is **byte-identical on v0.2.7 and v0.3.2**,
+> 0 errors on either side; import-time anchor asserts pass; headless boot
+> HTTP 200 with no tracebacks.
+>
+> **Why it mattered beyond the pin:** ratchet is installed *editable* on the dev
+> box from the `ratchet` working tree, which has been at v0.3.2 — so local
+> validation was running two minor versions **past** the ceiling this file
+> declared unsafe, and had been for some time. Nothing broke, but "it happened
+> not to matter" was luck, not method: local runs were not testifying to what
+> Streamlit Cloud deploys. Bumping the pin makes local == deployed again.
+> **If you re-tighten this bound, re-run the matrix rather than trusting this
+> paragraph** — that is the mistake this correction is fixing.
+
+ADR 016 (FP4 runtime-maturity) + ADR 017 (NPU precision-set) landed in v0.2.7 —
+see the precision-set section below.
 
 **Adopted from ratchet** (local definitions deleted):
 - Anchor loader: `from ratchet.anchors import load_llm_anchor, load_cnn_anchor`

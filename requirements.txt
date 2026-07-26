@@ -1,11 +1,22 @@
-# personal-ai-assistant-sizer — Skippy NPU sizer (retrofitted onto ratchet v0.2.7)
+# personal-ai-assistant-sizer — Skippy NPU sizer (retrofitted onto ratchet v0.3.2)
 
 # Shared SoC sizing engine — canonical tiers, projection, anchors, capability.
 # Installed from GitHub (public) — NOT from PyPI, because PyPI's `ratchet` is
 # a different unrelated project (versions 0.1.0–0.2.1, 0.3.0–0.4.1) that
 # collides with Kyle's package name. Streamlit Cloud will install via pip
 # from the github tag below; pin tightly so deploys are reproducible.
-ratchet @ git+https://github.com/kylefoxaustin/ratchet.git@v0.2.7
+#
+# 2026-07-26: bumped v0.2.7 -> v0.3.2. The old CLAUDE.md predicted v0.3.0 would
+# be BREAKING for PAI ("heterogeneous-architecture work"). It isn't: v0.3.0's
+# CPU-complex + perception work is purely ADDITIVE (new modules PAI never
+# imports), v0.3.1 corrects an i.MX 93 clock PAI's ladder doesn't carry, and
+# v0.3.2 adds CalibrationMethod values. VERIFIED before bumping: a 1374-cell
+# matrix (every tier x model x workload, all memory upgrades, all precision
+# sets x mature/immature, capability badges, tier specs) is BYTE-IDENTICAL on
+# v0.2.7 and v0.3.2, 0 errors either side; import-time anchor asserts pass;
+# headless boot HTTP 200, no tracebacks. Sibling surfaces: drone-sizer already
+# requires >=0.3.2; keyhole-sizer still pins v0.2.7 (its call).
+ratchet @ git+https://github.com/kylefoxaustin/ratchet.git@v0.3.2
 
 streamlit>=1.40.0
 pandas>=2.2.0
