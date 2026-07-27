@@ -149,9 +149,34 @@ Three deliberate differences come from ratchet's corrected canonical specs
    *below* the 5.2 measured stock — a discontinuity), now **~6.9** (5.2 ×
    179.2/134.4, anchored to the measurement; TTFT held at stock). PAI's
    `_maybe_anchor_overlay` BW-scales by `mem_bandwidth_gbs / stock_mem_bandwidth_gbs`
-   for `bw_projected` clones. (The cell still carries the `(BW-proj)` UI marker;
-   if the green "measured on real silicon" banner wording should differ for a
-   BW-projected clone, that's a small follow-up polish.)
+   for `bw_projected` clones.
+
+   > **CLOSED 2026-07-26 — and the original triage here was wrong.** This note
+   > used to end: *"if the green 'measured on real silicon' banner wording should
+   > differ for a BW-projected clone, that's a small follow-up polish."* It was
+   > not polish, it was a **provenance defect**, and it was **user-reachable**:
+   > the memory popover is enabled for exactly Mid/High, which are exactly the
+   > tiers carrying LLM anchors, so the shipped UI rendered 🟢 *"real NPU
+   > measurement"* on a bandwidth **projection** (demonstrated with a synthetic
+   > anchor: a ×1.6667 clone read 166.67 from a 100.00 anchor under an
+   > unqualified green badge). The number was always honest; the **label** was
+   > not — which is the worse half, because provenance is what you would
+   > normally catch a bad number *with*.
+   >
+   > Fixed: `_maybe_anchor_overlay` now records `bw_ratio` in
+   > `_silicon_anchor_meta` (not read off `_hw` at badge time — not every call
+   > site sets it), and `_source_badge` degrades any ratio ≠ 1.0 to
+   > 🟡 *"BW-projected from measured silicon · ×N BW"* with explicitly
+   > **"NOT a measurement"** wording. Stock cells stay 🟢. Engine untouched:
+   > the same 1374-cell matrix is byte-identical before and after.
+   >
+   > Shipped with a **control, not just a tag**: `_assert_no_green_on_projection()`
+   > runs at import (synthetic dicts — no secrets, no anchor load) and asserts
+   > nothing BW-projected can wear 🟢. Negative-tested — re-introducing the
+   > defect makes it fire. Credit to `keyhole-sizer`, which found the same class
+   > in its vision path; the severities are inverted (its instance was latent
+   > because its anchored tiers are never offered a memory upgrade, PAI's was
+   > live because ours are). **A tag is a disclosure; an invariant is a control.**
 
 **No AMENDMENT-1 cells flip under Option C.** PAI retains its own
 `compute_dtype`-based dtype gate (via ratchet's `hw_supports_dtype`, which gives

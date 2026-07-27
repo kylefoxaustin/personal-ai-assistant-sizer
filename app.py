@@ -151,6 +151,11 @@ def _maybe_anchor_overlay(r, model_key, hw, tier_name, decode_tokens):
         "measured_date": anchor.measured_date,
         "spec_tier_precision": f"{spec_tier}_{spec_prec}",
         "spec_model_key": spec_model,
+        # Carried so the badge can tell a REAL measurement from a bandwidth
+        # PROJECTION of one. Recorded here rather than read off `_hw` at badge
+        # time because not every call site sets `_hw` — the overlay is the only
+        # place that knows the ratio for certain. 1.0 == the measurement itself.
+        "bw_ratio": bw_ratio,
     }
     return r2
 
@@ -160,9 +165,19 @@ def _source_badge(r):
     s = r["source"]
     if s == "measured_silicon_anchor":
         m = r.get("_silicon_anchor_meta", {})
-        return ("🟢", "measured silicon",
-                f"real NPU measurement — `{m.get('spec_tier_precision','?')}` × "
+        prov = (f"`{m.get('spec_tier_precision','?')}` × "
                 f"`{m.get('spec_model_key','?')}`, {m.get('measured_date','?')}")
+        # A memory-upgraded clone is a BW PROJECTION of the anchor, not the
+        # anchor. Degrade it to 🟡 exactly like same_class_anchor below —
+        # claiming "real NPU measurement" for a number no silicon produced puts
+        # the error INSIDE the provenance, which is what you'd normally catch it
+        # with. The value is honest; only the label was wrong.
+        bw_ratio = m.get("bw_ratio", 1.0)
+        if abs(bw_ratio - 1.0) > 1e-9:
+            return ("🟡", f"BW-projected from measured silicon · ×{bw_ratio:.2f} BW",
+                    f"NOT a measurement: the measured anchor ({prov}) scaled by "
+                    f"{bw_ratio:.4f}× memory bandwidth")
+        return ("🟢", "measured silicon", f"real NPU measurement — {prov}")
     if s == "measured":
         return ("🟢", "measured", "direct RTX 5090 bake-off baseline")
     if s == "measured_anchor":
@@ -175,6 +190,30 @@ def _source_badge(r):
         return ("🟠", "cross-class (what-if)",
                 "two-floor MAX(BW, compute) physics — no anchor; directional")
     return ("⚪", s, "projection state not recognized")
+
+
+def _assert_no_green_on_projection():
+    """INVARIANT: nothing bandwidth-projected may wear the 🟢 measured badge.
+
+    The badge degradation above is a DISCLOSURE; this is the CONTROL. Shipping
+    only the tag documents the bug rather than fixing it, so the rule is
+    asserted rather than described. Runs at import on synthetic dicts — no
+    secrets, no anchor load, no network.
+    """
+    def badge_for(ratio):
+        return _source_badge({
+            "source": "measured_silicon_anchor",
+            "_silicon_anchor_meta": {"measured_date": "x", "spec_tier_precision": "mid_int8",
+                                     "spec_model_key": "m", "bw_ratio": ratio},
+        })[0]
+
+    assert badge_for(1.0) == "🟢", "the real measurement must stay 🟢"
+    for ratio in (1.3333, 1.4286, 1.6667, 0.75):
+        assert badge_for(ratio) != "🟢", (
+            f"BW-projected anchor (×{ratio}) is claiming a measured badge")
+
+
+_assert_no_green_on_projection()
 
 
 # ── Quant pill (mirrors keyhole's Quant ▾). PAI bakes quant into the catalog
