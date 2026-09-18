@@ -111,30 +111,91 @@ def gate_for(part: str | None = None, toolchain: str | None = None,
     return None
 
 
-def placement_verdict(gate: dict | None, model_ops: set[str] | None) -> dict:
+def placement_verdict(gate: dict | None, model_ops: set[str] | None,
+                      toolchain_path: str | None = None) -> dict:
     """PRE-ROOFLINE predicate. Returns a verdict, never a rate.
 
-    `model_ops` is the POST-FUSION op set for the model on this toolchain.
-    When it is unknown we return "unknown" rather than guessing placeable —
-    an unproven placement must not silently become a cost.
+    ⚠ A VERDICT IS SCOPED TO A TOOLCHAIN PATH, NOT TO A PART.
+    [agentic-skills-imx], 2026-09-17: the NeutronAdd gate (from an EMULATED
+    QEMU Neutron + vendor runner) says YOLOv8 n/s/m/l/x are unplaceable.
+    On real FRDM-IMX95-PRO silicon with the matched standalone eIQ SDK 3.1.3
+    + delegate 3.1.2, all five PLACE AND RUN — fused, 1 NeutronGraph / 33
+    nodes, 31.17 IPS for yolov8n [MEASURED, on-board].
+
+    Same silicon, same ops, OPPOSITE verdicts, because the toolchain paths
+    differ. So the gate is a true statement about a path and a false one
+    about the part — and `provenance.scope` sitting beside the answer does
+    not save it, because what reaches a UI cell is the VERDICT, not the
+    sentence. A reader takes "YOLOv8 — unplaceable" as a fact about the
+    board.
+
+    Therefore: a caller that cannot name the toolchain path it is asking
+    about gets "unknown". This is the same rule already applied to unknown
+    op sets, one level up. And per the same report, a SILICON row must
+    outrank an EMULATED row for the same (part, op) — never be averaged
+    with it; that ordering belongs to whoever merges the tables, but the
+    verdict below refuses to be the thing that hides the distinction.
     """
     if gate is None:
-        return {"verdict": "no_gate", "reason": "no feasibility data for this (part, toolchain)"}
+        return {"verdict": "no_gate",
+                "reason": "no feasibility data for this (part, toolchain)"}
+
+    prov = gate.get("provenance", {}) or {}
+    # Path identity is (toolchain, version). `external_ref` is a PROVENANCE
+    # POINTER to the source file, not an identity — using it here made every
+    # query mismatch.
+    gate_path = " ".join(x for x in (gate.get("toolchain"), gate.get("version")) if x)
+    gate_version = gate.get("version")
+    emulated = prov.get("scope") == "toolchain-not-silicon"
+
+    # A verdict that cannot name its path is not a verdict.
+    if emulated and not toolchain_path:
+        return {"verdict": "unknown",
+                "reason": ("gate is scoped toolchain-not-silicon; caller did not "
+                           "name a toolchain path, so this cannot be answered for the part"),
+                "gate_applies_to": gate_path,
+                "provenance": prov}
+
+    # Asking about a different path than the gate measured.
+    if toolchain_path and gate_path and toolchain_path != gate_path:
+        # ⚠ `version_stability.stable_across` is stability WITHIN this toolchain
+        # path, NOT a licence to answer for a different one. The gate lists
+        # 3.1.3 as stable — yet silicon AT 3.1.3 (standalone eIQ SDK + delegate
+        # 3.1.2) places YOLOv8, the opposite verdict. So it may only widen the
+        # VERSION match for the same toolchain; it may never cross paths.
+        same_toolchain = (gate.get("toolchain") or "") and \
+                         toolchain_path.startswith(gate.get("toolchain"))
+        stable = (gate.get("version_stability") or {}).get("stable_across", [])
+        widened = same_toolchain and any(v in toolchain_path for v in stable)
+        if not widened:
+            return {"verdict": "unknown",
+                    "reason": (f"gate measured {gate_path!r}; caller asked about "
+                               f"{toolchain_path!r} — different path, verdict does not transfer"),
+                    "gate_applies_to": gate_path,
+                    "provenance": prov}
+
     if not model_ops:
         return {"verdict": "unknown",
                 "reason": "post-fusion op set not supplied; placement unproven",
-                "gate_key": gate.get("part")}
+                "gate_applies_to": f"{gate_path} {gate_version}".strip()}
+
     blocking = []
     for op in gate.get("gating_ops", []):
         name = op.get("op")
         if name in model_ops:
             blocking.append({"op": name, "outcome": op.get("outcome"),
                              "excludes": op.get("excludes"), "tag": op.get("tag")})
+
+    scope_note = ("EMULATED toolchain path — NOT a statement about the silicon"
+                  if emulated else "measured on silicon")
+    base = {"applies_to_path": gate_path,
+            "scope": prov.get("scope"), "scope_note": scope_note,
+            "provenance": prov}
     if blocking:
-        return {"verdict": "unplaceable", "blocking_ops": blocking,
-                "provenance": gate.get("provenance", {})}
-    return {"verdict": "placeable", "checked_against": [o.get("op") for o in gate.get("gating_ops", [])],
-            "provenance": gate.get("provenance", {})}
+        return {"verdict": "unplaceable_on_path", "blocking_ops": blocking, **base}
+    return {"verdict": "placeable_on_path",
+            "checked_against": [o.get("op") for o in gate.get("gating_ops", [])], **base}
+
 
 # ─────────────── bundle-key ↔ catalog-key mapping ───────────────
 # v2 names the production model `skippy-7b-v4-q4-dense`; PAI's catalog has
@@ -164,12 +225,9 @@ def unresolved_model_keys(catalog: dict) -> list[str]:
     the engine will silently ignore. Returning it is the point — the failure
     mode this guards against is a skip nobody sees."""
     out = []
-    for section in ("models", "workloads"):
-        for k in _V2.get(section, {}):
-            if section == "workloads":
-                continue
-            if catalog_key(k) not in catalog:
-                out.append(k)
+    for k in _V2.get("models", {}):
+        if catalog_key(k) not in catalog:
+            out.append(k)
     for b in boards().values():
         for k in b.get("perf", {}):
             if catalog_key(k) not in catalog and k not in out:
