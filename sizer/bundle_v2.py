@@ -25,7 +25,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_V2_PATH = Path(__file__).parent / "sizer_bundle_v2.json"
+# v2 was promoted to the canonical name by [docs] @ face5a7 (2026-09-18);
+# the interim sizer_bundle_v2.json duplicate is gone. One bundle, one path.
+_V2_PATH = Path(__file__).parent / "sizer_bundle.json"
 
 
 def load_v2() -> dict:
@@ -208,8 +210,12 @@ def placement_verdict(gate: dict | None, model_ops: set[str] | None,
 # Same transitional shape as npu_model._ANCHOR_MODEL_KEY_MAP (PAI hyphenated
 # -> ratchet snake_case); a canonical-key migration across surfaces is the
 # real fix and is out of scope here.
+# [docs] fixed the mismatch upstream at face5a7 — the canonical bundle now
+# emits `qwen25-7b-v4-q4-dense` directly. The alias is kept as a no-op safety
+# net so an older vendored bundle still resolves; unresolved_model_keys() is
+# what actually guards against a silent skip.
 _BUNDLE_TO_CATALOG = {
-    "skippy-7b-v4-q4-dense": "qwen25-7b-v4-q4-dense",
+    "skippy-7b-v4-q4-dense": "qwen25-7b-v4-q4-dense",   # legacy key, pre-face5a7
 }
 
 

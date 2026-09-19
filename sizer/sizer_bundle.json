@@ -1,42 +1,12 @@
 {
   "meta": {
-    "schema_version": 1,
-    "methodology_version": "2026-05-11-semantic-regrade-shipped",
-    "generated_at": "2026-05-11T12:14:45",
-    "generator": "eval/build_sizer_bundle.py",
-    "source_bakeoff_files": [
-      "eval/results/sizer_bakeoff_kyle-30b-moe-20260422_20260422-171507.json",
-      "eval/results/sizer_bakeoff_kyle-30b-moe-20260422v2_20260422-184917.json",
-      "eval/results/sizer_bakeoff_kyle-30b-moe-rag-20260422_20260422-194659.json",
-      "eval/results/sizer_bakeoff_qwen25-14b-vanilla-20260423_20260422-230714.json"
-    ],
-    "models_measured": [
-      {
-        "canonical": "qwen3-30b-a3b-q4-moe",
-        "reported": "kyle-30b-a3b-v1-q4_k_m",
-        "bakeoff_file": "sizer_bakeoff_kyle-30b-moe-20260422_20260422-171507.json",
-        "timestamp": "2026-04-22T17:15:07"
-      },
-      {
-        "canonical": "qwen3-30b-a3b-q4-moe",
-        "reported": "kyle-30b-a3b-v1-q4_k_m",
-        "bakeoff_file": "sizer_bakeoff_kyle-30b-moe-20260422v2_20260422-184917.json",
-        "timestamp": "2026-04-22T18:49:17"
-      },
-      {
-        "canonical": "qwen3-30b-a3b-q4-moe",
-        "reported": "kyle-30b-a3b-v1-q4_k_m",
-        "bakeoff_file": "sizer_bakeoff_kyle-30b-moe-rag-20260422_20260422-194659.json",
-        "timestamp": "2026-04-22T19:46:59"
-      },
-      {
-        "canonical": "qwen2.5-14b-q4-dense",
-        "reported": "qwen2.5-14b-instruct-q4_k_m-00001-of-00003",
-        "bakeoff_file": "sizer_bakeoff_qwen25-14b-vanilla-20260423_20260422-230714.json",
-        "timestamp": "2026-04-22T23:07:14"
-      }
-    ],
-    "notes": "Phase 1 bundle \u2014 timing measured from Skippy prod /generate with include_telemetry=True. Tier hardware constants below are placeholders; final values inherit from personal-ai-assistant-sizer/sizer/npu_model.py once that repo is stood up."
+    "schema_version": 2,
+    "methodology_version": "2026-09-15-boards-and-feasibility",
+    "generated_at": "2026-09-15",
+    "generator": "eval/build_sizer_bundle_v2.py",
+    "spec": "docs/sizer-bundle-v2-schema.md",
+    "supersedes": "2026-05-11-semantic-regrade-shipped",
+    "notes": "v2 = v1 (models/workloads) + boards_measured (real silicon) + feasibility_gates (placeable/unplaceable). All figures provenance-tagged; iq9 perf CORRECTED 2026-09-15 (fresh enumeration superseded a stale memory line)."
   },
   "models": {
     "qwen2.5-14b-q4-dense": {
@@ -72,6 +42,22 @@
       "vocab_size": 151936,
       "ctx_len_trained": 262144,
       "ctx_len_extended": 262144
+    },
+    "qwen25-7b-v4-q4-dense": {
+      "display_name": "Skippy 7B v4 (Qwen 2.5 7B fine-tune, Q4_K_M, dense) \u2014 PRODUCTION",
+      "family": "qwen2.5",
+      "is_moe": false,
+      "total_params": 7615616512,
+      "active_params": 7615616512,
+      "bytes_per_param": 0.615,
+      "gguf_bytes": 4683073440,
+      "hidden_dim": 3584,
+      "num_layers": 28,
+      "num_attention_heads": 28,
+      "num_kv_heads": 4,
+      "vocab_size": 152064,
+      "ctx_len_trained": 32768,
+      "ctx_len_extended": 131072
     }
   },
   "workloads": {
@@ -480,6 +466,229 @@
         "bus_width_bit": 128,
         "mem_speed_gtps": 8.4,
         "bw_eff": 0.7
+      }
+    }
+  },
+  "boards_measured": {
+    "rtx5090": {
+      "part": "NVIDIA GeForce RTX 5090 (32 GB GDDR7)",
+      "arch": "Blackwell (sm_120)",
+      "role": "SOURCE OF TRUTH \u2014 every other rung is a delta against this",
+      "provenance": {
+        "tier": "MEASURED",
+        "source": "scripts/bench_skippy.py",
+        "caveat": "local desktop 5090, Skippy prod /generate/stream"
+      },
+      "perf": {
+        "qwen25-7b-v4-q4-dense": {
+          "q4_k_m": {
+            "cold_start": {
+              "decode_tps_p50": 117.3,
+              "decode_tps_p95": 117.3,
+              "ttft_s_p50": 0.11,
+              "n": 1
+            },
+            "short_chat": {
+              "decode_tps_p50": 220.8,
+              "decode_tps_p95": 226.0,
+              "ttft_s_p50": 0.02,
+              "n": 5
+            },
+            "rag_long_context": {
+              "decode_tps_p50": 37.8,
+              "decode_tps_p95": 67.9,
+              "ttft_s_p50": 2.24,
+              "n": 5
+            },
+            "long_decode": {
+              "decode_tps_p50": 218.9,
+              "decode_tps_p95": 221.0,
+              "ttft_s_p50": 0.02,
+              "n": 5
+            },
+            "tag": "MEASURED",
+            "date": "2026-09-15"
+          }
+        }
+      }
+    },
+    "orin-agx": {
+      "part": "NVIDIA Jetson AGX Orin (204.8 GB/s LPDDR5)",
+      "arch": "Ampere (sm_87)",
+      "provenance": {
+        "tier": "MEASURED",
+        "source": "eval/results/orin/GGUF_LADDER.md",
+        "caveat": "llama.cpp CUDA, llama-bench -p0 -n128; decode-only, no RAG"
+      },
+      "perf": {
+        "qwen25-7b-v4-q4-dense": {
+          "q4_k_m": {
+            "decode_tps": 27.82,
+            "achieved_gb_s": 121.6,
+            "tag": "MEASURED",
+            "date": "2026-07-09"
+          }
+        },
+        "qwen2.5-14b-q4-dense": {
+          "q4_k_m": {
+            "decode_tps": 13.76,
+            "achieved_gb_s": 123.7,
+            "tag": "MEASURED"
+          },
+          "q8_0": {
+            "decode_tps": 10.79,
+            "achieved_gb_s": 169.4,
+            "tag": "MEASURED"
+          }
+        },
+        "qwen3-30b-a3b-q4-moe": {
+          "q4_k_m": {
+            "decode_tps": 43.74,
+            "achieved_gb_s": 91.6,
+            "tag": "MEASURED"
+          }
+        }
+      },
+      "precision_facts": [
+        {
+          "claim": "achieved bandwidth is size-invariant within a precision but precision-dependent (fp16/Q8 ~80% bus, Q4 ~60%, MoE-Q4 ~45%)",
+          "tag": "MEASURED"
+        },
+        {
+          "claim": "Q4 draws MORE power than fp16 (32.5W vs 27.1W) while moving fewer bytes \u2014 dequant is compute, not free",
+          "tag": "MEASURED"
+        }
+      ]
+    },
+    "iq9": {
+      "part": "Qualcomm SA8775P / QCS9075 (Hexagon v73 HTP, 2\u00d7NSP)",
+      "arch": "Hexagon HTP v73",
+      "provenance": {
+        "tier": "MEASURED",
+        "source": "qualcomm memory iq9-npu-llm-genie-deploy; genie-t2t-run --profile on qwen25vl_bundle",
+        "caveat": "single-NSP unless noted, clocks pinned"
+      },
+      "perf": {
+        "qwen2.5-7b-w4a16": {
+          "w4a16": {
+            "prefill_tps": 596.3,
+            "ttft_ms": 287,
+            "decode_tps": 9.45,
+            "tag": "MEASURED",
+            "date": "2026-09-15",
+            "note": "text prompt, \u2264256 input tokens (see context_cap)"
+          }
+        },
+        "qwen3-vl-4b-w4a16": {
+          "w4a16": {
+            "prefill_tps": 1003,
+            "decode_tps": 15.75,
+            "tag": "MEASURED",
+            "note": "PERF-ONLY / ACCURACY-INVALID \u2014 vendor harness zeroes deepstack"
+          }
+        }
+      },
+      "context_cap": {
+        "npu_max_input_tokens": 256,
+        "beyond_cap": {
+          "backend": "CPU llama.cpp",
+          "decode_tps": 19,
+          "ttft_s_at_2000tok": 108,
+          "tag": "MEASURED",
+          "date": "2026-09-15"
+        },
+        "note": "BINDING constraint for RAG/long-context on iq9 \u2014 NPU prefill 596 t/s applies ONLY \u2264256 input tokens; encode as a length gate, not a cost curve."
+      },
+      "npu_capability": {
+        "nsp_count": 2,
+        "vtcm_mb_per_nsp": 8,
+        "vtcm_poolable": false,
+        "datatypes": [
+          "w4a16",
+          "w8a16",
+          "fp16",
+          "int8"
+        ],
+        "fp8": "v79+ only",
+        "mxfp4_fp4": "rejected",
+        "tag": "SOURCED (on-silicon capability query)"
+      },
+      "precision_facts": [
+        {
+          "claim": "decode is DDR-bandwidth-bound (confirmed 3 ways); prefill is compute/TOPS-bound + parallel \u2014 scarce resource for decode = DDR BW, not TOPS",
+          "tag": "MEASURED"
+        },
+        {
+          "claim": "dual-NSP = ~1.94x AGGREGATE throughput (2 policies) but 0% on single-policy decode latency (2nd NSP adds compute, not bandwidth)",
+          "tag": "MEASURED"
+        },
+        {
+          "claim": "bare int8 MatMul is 1.14\u20131.23x SLOWER than fp16 on this HTP (HMX wants conv-shaped ops, not GEMM) \u2014 do NOT assume int8>fp16 for transformers",
+          "tag": "MEASURED"
+        },
+        {
+          "claim": "INT4 decode ~1.3x over fp16-ish with a +6-8% TTFT dequant tax (Thor +5-9%, 5090 flat)",
+          "tag": "MEASURED"
+        }
+      ],
+      "gaps": [
+        {
+          "axis": "decode_tps_vs_context_length",
+          "status": "NOT_RUN",
+          "tag": "GAP",
+          "note": "gated on qualcomm's VSLAM push; DERIVED expectation: decode t/s FALLS with context on a BW-bound decode (KV re-read every step) \u2014 slope unmeasured"
+        }
+      ]
+    }
+  },
+  "feasibility_gates": {
+    "imx95__eIQ-Neutron__3.2.0": {
+      "part": "NXP i.MX95 eIQ Neutron NPU",
+      "toolchain": "eIQ Neutron",
+      "version": "3.2.0",
+      "external_ref": "95emulator tree: docs/imx95-feasibility-gate.json (schema imx95/feasibility-gate/v1)",
+      "summary": {
+        "models": 41,
+        "placeable": 26,
+        "unplaceable": 15
+      },
+      "gating_ops": [
+        {
+          "op": "NeutronAdd",
+          "outcome": "absent",
+          "excludes": "every residual architecture (elementwise-add across two quant scales)",
+          "control": "micro elementwise-MUL places bit-exact while micro ADD SIGILLs \u2014 isolates the OP",
+          "tag": "MEASURED"
+        },
+        {
+          "op": "NeutronMulSymByAsym",
+          "outcome": "faults",
+          "excludes": "SE-block families",
+          "tag": "MEASURED"
+        }
+      ],
+      "version_stability": {
+        "stable_across": [
+          "3.1.3",
+          "3.2.0"
+        ],
+        "tag": "MEASURED",
+        "note": "gate did not move across these versions \u2014 key can be coarser than every point release"
+      },
+      "correlated_failure": {
+        "claim": "agents sharing a backbone family fail placement together, not independently \u2014 a scheduler treating placement as per-agent probability is wrong in a correlated direction",
+        "tag": "REASONING"
+      },
+      "provenance": {
+        "tier": "MEASURED",
+        "scope": "toolchain-not-silicon",
+        "caveat": "emulated NPU path in QEMU vs vendor golden kernels; one board, one toolchain, 37\u219241 models \u2014 DO NOT extrapolate to other parts"
+      },
+      "design_notes": {
+        "key": "(part, toolchain, VERSION) \u2014 toolchain versions move independently of silicon",
+        "predicate_before_roofline": "feasibility is a GATE (placeable/fallback/unplaceable), not a cost; folding it into a cost model yields a confident wrong number",
+        "post_fusion": "the op set that matters is POST-FUSION (converter behaviour), not the model file \u2014 MobileNet-v1\u219229 fused ops, DenseNet-121\u2192246",
+        "cheap_form": "a short list of LOAD-BEARING gating ops (residual-add) excludes whole arch families in one lookup, no graph walk"
       }
     }
   }
